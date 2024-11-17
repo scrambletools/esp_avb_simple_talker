@@ -1,0 +1,5 @@
+build/
+Kconfig.projbuild
+.DS_Store
+.vscode/
+components/
