@@ -27,6 +27,7 @@ typedef enum {
   disconnect_rx_response = 5
 } acmpdu_t;
 
+// Functions
 void append_adpdu(adpdu_t type, eth_frame_t *adpdu);
 
 #endif /* COMPONENTS_ATDECC_INCLUDE_ATDECC_H_ */

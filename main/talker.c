@@ -1,20 +1,26 @@
 #include "talker.h"
 
-// for l2tap
-#define ETH_INTERFACE   "ETH_DEF"
-#define INVALID_FD      -1
-#define AVTP_ETHER_TYPE 0x22f0
+// L2tap file descriptors for each Ethertype
+static int l2tap_gptp_fd;
+static int l2tap_avtp_fd;
+static int l2tap_msrp_fd;
+static int l2tap_mvrp_fd;
+
+// Commonly used mac addresses
+static const uint8_t bcast_mac_addr[] = { 0x91, 0xe0, 0xf0, 0x01, 0x00, 0x00 };
+//static const uint8_t spantree_mac_addr[] = { 0x01, 0x80, 0xc2, 0x00, 0x00, 0x21 };
+//static const uint8_t lldp_mcast_mac_addr[] = { 0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e };
+
+// Ethernet driver handle
+static esp_eth_handle_t eth_handle = NULL;
 
 // Define logging tag
 static const char *TAG = "TALKER";
 
-static const uint8_t bcast_mac_addr[] = { 0x91, 0xe0, 0xf0, 0x01, 0x00, 0x00 };
-
-int l2tap_fd;
-
-// Opens and configures L2 TAP file descriptor, flags=0 is blocking, 1 is non-blocking
-static int init_l2tap_fd(int flags, uint16_t eth_type)
+// Opens and configures L2 TAP file descriptor; flags=0 is blocking, 1 is non-blocking
+int init_l2tap_fd(int flags, ethertype_t ethertype)
 {
+    // Open a file descriptor using the flags
     int fd = open("/dev/net/tap", flags);
     if (fd < 0) {
         ESP_LOGE(TAG, "Unable to open L2 TAP interface: errno %d", errno);
@@ -22,20 +28,20 @@ static int init_l2tap_fd(int flags, uint16_t eth_type)
     }
     ESP_LOGI(TAG, "/dev/net/tap fd %d successfully opened", fd);
 
-    // Configure Ethernet interface on which to get raw frames
-    int ret;
-    if ((ret = ioctl(fd, L2TAP_S_INTF_DEVICE, ETH_INTERFACE)) == -1) {
+    // Configure the fd to use the default Ethernet interface
+    int result;
+    if ((result = ioctl(fd, L2TAP_S_INTF_DEVICE, ETH_INTERFACE)) == INVALID_FD) {
         ESP_LOGE(TAG, "Unable to bound L2 TAP fd %d with Ethernet device: errno %d", fd, errno);
         goto error;
     }
-    ESP_LOGI(TAG, "L2 TAP fd %d successfully bound to `%s`", fd, ETH_INTERFACE);
+    ESP_LOGI(TAG, "L2 TAP fd %d successfully bound to the default Ethernet interface", fd);
 
     // Configure Ethernet frames we want to filter out
-    if ((ret = ioctl(fd, L2TAP_S_RCV_FILTER, &eth_type)) == -1) {
+    if ((result = ioctl(fd, L2TAP_S_RCV_FILTER, &ethertype)) == INVALID_FD) {
         ESP_LOGE(TAG, "Unable to configure fd %d Ethernet type receive filter: errno %d", fd, errno);
         goto error;
     }
-    ESP_LOGI(TAG, "L2 TAP fd %d Ethernet type filter configured to 0x%x", fd, eth_type);
+    ESP_LOGI(TAG, "L2 TAP fd %d Ethernet type filter configured to 0x%x", fd, ethertype);
 
     return fd;
 error:
@@ -45,16 +51,59 @@ error:
     return INVALID_FD;
 }
 
+// Opens and configures L2 TAP file descriptor for sending
+int init_l2tap_fd_for_sending(ethertype_t ethertype)
+{
+    int fd = open("/dev/net/tap", 0);
+    if (fd < 0) {
+        ESP_LOGE(TAG, "Unable to open L2 TAP interface: errno %d", errno);
+        goto error;
+    }
+    ESP_LOGI(TAG, "/dev/net/tap fd %d successfully opened", fd);
+
+    // Configure Ethernet interface to use with L2TAP
+    int result;
+    if ((result = ioctl(fd, L2TAP_S_INTF_DEVICE, ETH_INTERFACE)) == INVALID_FD) {
+        ESP_LOGE(TAG, "Unable to bind L2 TAP fd %d with Ethernet device: errno %d", fd, errno);
+        goto error;
+    }
+    ESP_LOGI(TAG, "L2 TAP fd %d successfully bound to the default Ethernet interface", fd);
+    return fd;
+error:
+    if (fd != INVALID_FD) {
+        close(fd);
+    }
+    return INVALID_FD;
+}
+
 // frame logger
-static void eth_frame_logger(void *pvParameters)
+static void frame_watcher_task(void *pvParameters)
 {
     ESP_LOGI(TAG, "Started task to log frames.");
+
+    // Grab config from the task params
+    ethertype_t ethertype = (ethertype_t)pvParameters;
+
     uint8_t rx_buffer[128];
-    int eth_tap_fd;
-    
-    // Open and configure L2 TAP File descriptor
-    if ((eth_tap_fd = init_l2tap_fd(1, AVTP_ETHER_TYPE)) == INVALID_FD) {
-        goto error;
+    int fd;
+
+    // Select the fd based on the given Ethertype
+    switch (ethertype) {
+        case ethertype_gptp:
+            fd = l2tap_gptp_fd;
+            break;
+        case ethertype_msrp:
+            fd = l2tap_msrp_fd;
+            break;
+        case ethertype_mvrp:
+            fd = l2tap_mvrp_fd;
+            break;
+        case ethertype_avtp:
+            fd = l2tap_avtp_fd;
+            break;
+        default:
+            ESP_LOGE(TAG, "Cannot log an unkown Ethertype: %d.", ethertype);
+            goto error;
     }
 
     while (1) {
@@ -62,57 +111,79 @@ static void eth_frame_logger(void *pvParameters)
         tv.tv_sec = 5;
         tv.tv_usec = 0;
 
+        // Create and fd set
         fd_set rfds;
         FD_ZERO(&rfds);
-        FD_SET(eth_tap_fd, &rfds);
+        FD_SET(fd, &rfds);
 
-        int ret_sel = select(eth_tap_fd + 1, &rfds, NULL, NULL, &tv);
-        if (ret_sel > 0) {
-            ssize_t len = read(eth_tap_fd, rx_buffer, sizeof(rx_buffer));
+        int result = select(fd + 1, &rfds, NULL, NULL, &tv);
+        if (result > 0) {
+            ssize_t len = read(fd, rx_buffer, sizeof(rx_buffer));
             if (len > 0) {
                 eth_frame_t *recv_msg = (eth_frame_t *)rx_buffer;
-                ESP_LOGI(TAG, "fd %d received %d bytes from %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", eth_tap_fd,
+                ESP_LOGI(TAG, "fd %d received %d bytes from %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", fd,
                             len, recv_msg->header.src.addr[0], recv_msg->header.src.addr[1], recv_msg->header.src.addr[2],
                             recv_msg->header.src.addr[3], recv_msg->header.src.addr[4], recv_msg->header.src.addr[5]);
             } else {
-                ESP_LOGE(TAG, "L2 TAP fd %d read error: errno %d", eth_tap_fd, errno);
+                ESP_LOGE(TAG, "L2 TAP fd %d read error: errno %d", fd, errno);
                 break;
             }
-        } else if (ret_sel == 0) {
+        } else if (result == 0) {
             ESP_LOGD(TAG, "L2 TAP select timeout");
         } else {
             ESP_LOGE(TAG, "L2 TAP select error: errno %d", errno);
             break;
         }
     }
-    close(eth_tap_fd);
+    close(fd);
 error:
     vTaskDelete(NULL);
 }
 
-// Initialize the Talker/Listener
-esp_err_t initialize(esp_eth_handle_t handle)
+// Setup l2tap file descripters for all Ethertypes
+esp_err_t init_all_l2tap_fds()
 {
-    // Initialize L2 TAP VFS interface
-    ESP_ERROR_CHECK(esp_vfs_l2tap_intf_register(NULL));
-
-    if ((l2tap_fd = init_l2tap_fd(1, AVTP_ETHER_TYPE)) == INVALID_FD) {
-        return ESP_FAIL;
-    }
-    eth_handle = handle;
-    
+    // Setup gPTP fd
+    // if ((l2tap_gptp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_gptp)) == INVALID_FD) {
+    //     return ESP_FAIL;
+    // }
+    // // Setup AVTP fd
+    // if ((l2tap_avtp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_avtp)) == INVALID_FD) {
+    //     return ESP_FAIL;
+    // }
+    // // Setup MSRP fd
+    // if ((l2tap_msrp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_msrp)) == INVALID_FD) {
+    //     return ESP_FAIL;
+    // }
+    // // Setup MVRP fd
+    // if ((l2tap_mvrp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_mvrp)) == INVALID_FD) {
+    //     return ESP_FAIL;
+    // }
     return ESP_OK;
 }
 
 // Send a frame
 esp_err_t send_frame(eth_frame_t frame)
 {
-    print_frame(FrameTypeAdpdu, frame, frame.payload_size + ETH_HEADER_LEN);
-    ssize_t ret = write(l2tap_fd, &frame, frame.payload_size + ETH_HEADER_LEN);
-    if (ret < 0) {
-        ESP_LOGE(TAG, "L2 TAP fd %d write error: errno: %d", l2tap_fd, errno);
+    int fd;
+
+    // Select the fd based on the frame's Ethertype
+    ethertype_t ethertype = ntohs(frame.header.type);
+    //ESP_LOGI(TAG, "Going to use ethertype %d and payload size %d", ethertype, frame.payload_size);
+
+    // Setup fd
+    if ((fd = init_l2tap_fd(0, ethertype)) == INVALID_FD) {
         return ESP_FAIL;
     }
+
+    // Send away!
+    print_frame(FrameTypeAdpdu, frame, frame.payload_size + ETH_HEADER_LEN);
+    ssize_t len = write(fd, &frame, frame.payload_size + ETH_HEADER_LEN);
+    if (len < 0) {
+        ESP_LOGE(TAG, "L2 TAP fd %d write error: errno: %d", fd, errno);
+        //return ESP_FAIL;
+    }
+    close(fd);
     return ESP_OK;
 }
 
@@ -121,11 +192,43 @@ void send_entity_available()
 {
     eth_frame_t frame;
     uint8_t mac_addr[ETH_ADDR_LEN];
-    uint16_t ether_type = ntohs(AVTP_ETHER_TYPE);
+    uint16_t ethertype = ntohs(ethertype_avtp);
     esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
     memcpy(frame.header.src.addr, mac_addr, ETH_ADDR_LEN);
     memcpy(frame.header.dest.addr, bcast_mac_addr, ETH_ADDR_LEN);
-    memcpy(&frame.header.type, &ether_type, sizeof(ether_type));
+    memcpy(&frame.header.type, &ethertype, sizeof(ethertype));
     append_adpdu(entity_available, &frame);
     send_frame(frame);
+}
+
+// Starup the talker
+void start_talker(esp_netif_iodriver_handle handle) {
+    
+    ESP_LOGI(TAG, "Starting Talker...");
+    
+    // Set the Ethernet driver handle
+    eth_handle = handle;
+
+    // Initialize L2 TAP VFS interface
+    ESP_ERROR_CHECK(esp_vfs_l2tap_intf_register(NULL));
+
+    // Open and configure L2 TAP file descriptors
+    esp_err_t err = init_all_l2tap_fds();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize FDs: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "All FDs are open.");
+        
+        // Start watching for gPTP frames
+        ethertype_t type = ethertype_gptp;
+        //xTaskCreate(frame_watcher_task, "watch_gptp", 12288, &type, 5, NULL);
+
+        // Send out stuff
+        while (true) {
+            // Send Entity Available message
+            send_entity_available();
+            ESP_LOGI(TAG, "Entity Available message sent.");
+            vTaskDelay(pdMS_TO_TICKS(2000)); // repeat every ~10sec
+        }
+    }
 }

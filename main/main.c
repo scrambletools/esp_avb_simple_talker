@@ -2,17 +2,14 @@
 #include <inttypes.h>
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "nvs_flash.h"
 #include "esp_system.h"
 #include "esp_err.h"
-#include "freertos/event_groups.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_eth.h"
 #include "esp_netif.h"
 #include "driver/gpio.h"
-#include "esp_vfs_l2tap.h"
 #include "lwip/prot/ethernet.h" // Ethernet header
 #include "driver/timer.h"
 #include "lwip/ip_addr.h"
@@ -29,24 +26,17 @@
 #define TIMER_DIVIDER   (16)  //  Hardware timer clock divider
 #define TIMER_SCALE     (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
 
-// test device is 48:e7:29:a8:b4:af
-// sonnettech is  00:30:93:19:06:7e
-// bcast addr is  91:e0:f0:01:00:00
-
-// Turn on ethernet frame analyzer
-static bool eth_analyzer = true;
-// Use IP or not
-static bool use_ip = true;
-// Wait for tester to start monitoring serial port
-static bool startup_wait = true;
 // Define logging tag
 static const char *TAG = "MAIN";
-//static auto const s_TalkerEntityID = UniqueIdentifier{0x1b92fffe02233b};
-static bool ip_obtained = false;  // Global flag for IP status
-// track dhcp retries
-static int dhcp_retry_num = 0;
 
-static esp_err_t set_dns_server(esp_netif_t *netif, uint32_t addr, esp_netif_dns_type_t type)
+// Global flag for IP status
+static bool ip_obtained = false;  
+
+// Ethernet driver handle
+static esp_eth_handle_t eth_handle = NULL;
+
+// Setup DNS config
+static esp_err_t set_dns_config(esp_netif_t *netif, uint32_t addr, esp_netif_dns_type_t type)
 {
     if (addr && (addr != IPADDR_NONE)) {
         esp_netif_dns_info_t dns;
@@ -57,6 +47,7 @@ static esp_err_t set_dns_server(esp_netif_t *netif, uint32_t addr, esp_netif_dns
     return ESP_OK;
 }
 
+// Setup static IP address (if needed)
 static void set_static_ip(esp_netif_t *netif)
 {
     esp_err_t result = esp_netif_dhcpc_stop(netif);
@@ -79,10 +70,11 @@ static void set_static_ip(esp_netif_t *netif)
     ip_obtained = true;
     ESP_LOGI(TAG, "Success to set static ip: %s, netmask: %s, gw: %s", FALLBACK_IP_ADDR, FALLBACK_NETMASK_ADDR, FALLBACK_GW_ADDR);
     // Set dns server
-    ESP_ERROR_CHECK(set_dns_server(netif, ipaddr_addr(FALLBACK_MAIN_DNS_SERVER), ESP_NETIF_DNS_MAIN));
-    ESP_ERROR_CHECK(set_dns_server(netif, ipaddr_addr(FALLBACK_BACKUP_DNS_SERVER), ESP_NETIF_DNS_BACKUP));
+    ESP_ERROR_CHECK(set_dns_config(netif, ipaddr_addr(FALLBACK_MAIN_DNS_SERVER), ESP_NETIF_DNS_MAIN));
+    ESP_ERROR_CHECK(set_dns_config(netif, ipaddr_addr(FALLBACK_BACKUP_DNS_SERVER), ESP_NETIF_DNS_BACKUP));
 }
 
+// Fallback to static IP when DHCP fails
 static void fallback_to_static_ip(esp_netif_t *netif, bool wait) {
     // Select and initialize basic parameters of the timer
     timer_config_t config = {
@@ -93,7 +85,7 @@ static void fallback_to_static_ip(esp_netif_t *netif, bool wait) {
     }; // default clock source is APB
     timer_init(TIMER_GROUP_0, TIMER_0, &config);
     /* Timer's counter will initially start from value below.
-       Also, if auto_reload is set, this value will be automatically reload on alarm */
+       Also, if auto_reload is set, this value will automatically reload on alarm */
     timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
     timer_start(TIMER_GROUP_0, TIMER_0);
     uint64_t task_counter_value;
@@ -111,30 +103,7 @@ static void fallback_to_static_ip(esp_netif_t *netif, bool wait) {
     }
 }
 
-static void start_talker_task(void *pvParameters) {
-    
-    ESP_LOGI(TAG, "Starting TalkerListener...");
-
-    esp_netif_t *eth_netif = (esp_netif_t *)pvParameters;
-    
-    // Open and configure L2 TAP File descriptor
-    esp_err_t err = initialize(eth_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize AtdeccTalkerListener: %s", esp_err_to_name(err));
-        goto error;
-    } else {
-        //while (true) {
-            // Send Entity Available message
-            send_entity_available();
-            //ESP_LOGI(TAG, "Entity Available message sent.");
-            //vTaskDelay(pdMS_TO_TICKS(5000));
-        //}
-    }
-error:
-    vTaskDelete(NULL);
-}
-
-// Ethernet event handler
+// Handle Ethernet events
 static void eth_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
     if (event_id == ETHERNET_EVENT_CONNECTED) {
@@ -142,22 +111,27 @@ static void eth_event_handler(void* arg, esp_event_base_t event_base, int32_t ev
         ESP_LOGI(TAG, "Ethernet Link Up");
         vTaskDelay(pdMS_TO_TICKS(500)); // Delay to ensure link is stable
 
-        // Start DHCP
+        // Grab the network interface from event arg
         esp_netif_t *eth_netif = (esp_netif_t *)arg;
+
+        // Start AVB talker (doesn't use IP)
+        esp_netif_iodriver_handle handle = esp_netif_get_io_driver(eth_netif);
+        start_talker(handle);
+
+        // Start DHCP
         esp_netif_ip_info_t ip_info;
-        static bool waitFirst = false; // flag to wait for dhcp to timeout or not
-        //esp_netif_get_ip_info(eth_netif, &ip_info);
+        static bool waitForDhcp = true; // wait for dhcp to timeout or not
         if (esp_netif_get_ip_info(eth_netif, &ip_info) == ESP_OK) {
             if (ip_info.ip.addr != 0) {
                 ESP_LOGI(TAG, "IP Address: " IPSTR, IP2STR(&ip_info.ip));
             } else {
                 ESP_LOGI(TAG, "IP Address not assigned yet.");
-                waitFirst = true; // wait for dhcp to time out before assigning static ip
-                fallback_to_static_ip(eth_netif, waitFirst);
+                fallback_to_static_ip(eth_netif, waitForDhcp);
             }
         } else {
+            waitForDhcp = false; // no need to wait for dhcp to time out
             ESP_LOGE(TAG, "Failed to get IP address, assigning manual address.");
-            fallback_to_static_ip(eth_netif, waitFirst);
+            fallback_to_static_ip(eth_netif, waitForDhcp);
         }
     } else if (event_id == ETHERNET_EVENT_DISCONNECTED) {
         ESP_LOGI(TAG, "Ethernet Link Down");
@@ -168,6 +142,7 @@ static void eth_event_handler(void* arg, esp_event_base_t event_base, int32_t ev
     }
 }
 
+// Handle IP events
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
@@ -175,13 +150,9 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base, int32_t
     
     // Set the IP obtained flag to true
     ip_obtained = true;
-    
-    esp_netif_t *eth_netif = (esp_netif_t *)arg;
-    //xTaskCreate(eth_frame_logger, "frame_logger", 4096, NULL, 5, NULL);
-    xTaskCreate(start_talker_task, "talker_listener", 8192, eth_netif, 5, NULL);
 }
 
-// Ethernet initialization function for ESP32 with LAN8720 PHY
+// Initialize Ethernet for ESP32 with LAN8720 PHY
 static esp_netif_t* init_ethernet()
 {
     // Initialize TCP/IP stack
@@ -246,22 +217,31 @@ static esp_netif_t* init_ethernet()
 
 void app_main()
 {
+    // Initialize L2 TAP VFS interface
+    //ESP_ERROR_CHECK(esp_vfs_l2tap_intf_register(NULL));
+
     // Initialize NVS (non-volatile storage)
     ESP_ERROR_CHECK(nvs_flash_init());
-
-    // Wait a little for serial monitoring
-    if (startup_wait) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
-    }
     
     // Initialize Ethernet and establish a connection
-    //static esp_netif_t *eth_netif = init_ethernet();
     init_ethernet();
-    //TaskHandle_t xHandle;
-    // while(1) {
-    //     //ESP_LOGI(TAG, "HEAP SIZE = %d", heap_caps_get_free_size(MALLOC_CAP_8BIT) );
-    //     xHandle = xTaskGetHandle( "talker_listener" );
-    //     ESP_LOGI(TAG, "TASK high water mark = %d", uxTaskGetStackHighWaterMark(xHandle));
-    //     vTaskDelay(pdMS_TO_TICKS(5000));
-    // }
+
+    // Check memory consumption of tasks
+    //char h1_name[] = "watch_gptp"; // usually under 16 chars
+    //char h2_name[] = "watch_avtp";
+    //char h3_name[] = "watch_msrp";
+    //char h4_name[] = "watch_mvrp";
+    TaskHandle_t handy = xTaskGetHandle( "main_task" );
+    //TaskHandle_t h1 = xTaskGetHandle( h1_name );
+    //TaskHandle_t h2 = xTaskGetHandle( h2_name );
+    //TaskHandle_t h3 = xTaskGetHandle( h3_name );
+    //TaskHandle_t h4 = xTaskGetHandle( h4_name );
+    while(1) {
+        ESP_LOGI(TAG, "TASK %s high water mark = %d", "main_task", uxTaskGetStackHighWaterMark(handy));
+        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h1_name, uxTaskGetStackHighWaterMark(h1));
+        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h2_name, uxTaskGetStackHighWaterMark(h2));
+        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h3_name, uxTaskGetStackHighWaterMark(h3));
+        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h4_name, uxTaskGetStackHighWaterMark(h4));
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 }
