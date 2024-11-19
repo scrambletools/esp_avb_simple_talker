@@ -665,7 +665,7 @@ static uint8_t acmp_connect_rx_response[] = {
     0x00,0x00 // connected_listeners_entries: 0
 }; // 56 bytes
 
-// create adpdu based on message type
+// append adpdu based on message type and set payload_size
 void append_adpdu(adpdu_t type, eth_frame_t *frame) {
     switch (type) {
         case entity_available:

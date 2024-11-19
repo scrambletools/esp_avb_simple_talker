@@ -26,7 +26,7 @@ int init_l2tap_fd_for_sending(ethertype_t ethertype);
 void start_talker(esp_netif_iodriver_handle handle);
 static void frame_watcher_task(void *pvParameters);
 esp_err_t init_all_l2tap_fds();
-esp_err_t send_frame(eth_frame_t frame);
+esp_err_t send_frame(eth_frame_t *frame);
 void send_entity_available();
 
 #endif /* COMPONENTS_ATDECC_INCLUDE_TALKER_H_ */

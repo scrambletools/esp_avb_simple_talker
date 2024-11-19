@@ -51,31 +51,6 @@ error:
     return INVALID_FD;
 }
 
-// Opens and configures L2 TAP file descriptor for sending
-int init_l2tap_fd_for_sending(ethertype_t ethertype)
-{
-    int fd = open("/dev/net/tap", 0);
-    if (fd < 0) {
-        ESP_LOGE(TAG, "Unable to open L2 TAP interface: errno %d", errno);
-        goto error;
-    }
-    ESP_LOGI(TAG, "/dev/net/tap fd %d successfully opened", fd);
-
-    // Configure Ethernet interface to use with L2TAP
-    int result;
-    if ((result = ioctl(fd, L2TAP_S_INTF_DEVICE, ETH_INTERFACE)) == INVALID_FD) {
-        ESP_LOGE(TAG, "Unable to bind L2 TAP fd %d with Ethernet device: errno %d", fd, errno);
-        goto error;
-    }
-    ESP_LOGI(TAG, "L2 TAP fd %d successfully bound to the default Ethernet interface", fd);
-    return fd;
-error:
-    if (fd != INVALID_FD) {
-        close(fd);
-    }
-    return INVALID_FD;
-}
-
 // frame logger
 static void frame_watcher_task(void *pvParameters)
 {
@@ -143,47 +118,59 @@ error:
 // Setup l2tap file descripters for all Ethertypes
 esp_err_t init_all_l2tap_fds()
 {
-    // Setup gPTP fd
-    // if ((l2tap_gptp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_gptp)) == INVALID_FD) {
-    //     return ESP_FAIL;
-    // }
-    // // Setup AVTP fd
-    // if ((l2tap_avtp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_avtp)) == INVALID_FD) {
-    //     return ESP_FAIL;
-    // }
-    // // Setup MSRP fd
-    // if ((l2tap_msrp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_msrp)) == INVALID_FD) {
-    //     return ESP_FAIL;
-    // }
-    // // Setup MVRP fd
-    // if ((l2tap_mvrp_fd = init_l2tap_fd(NON_BLOCKING, ethertype_mvrp)) == INVALID_FD) {
-    //     return ESP_FAIL;
-    // }
+    //Setup gPTP fd
+    if ((l2tap_gptp_fd = init_l2tap_fd(O_NONBLOCK, ethertype_gptp)) == INVALID_FD) {
+        return ESP_FAIL;
+    }
+    // Setup AVTP fd
+    if ((l2tap_avtp_fd = init_l2tap_fd(O_NONBLOCK, ethertype_avtp)) == INVALID_FD) {
+        return ESP_FAIL;
+    }
+    // Setup MSRP fd
+    if ((l2tap_msrp_fd = init_l2tap_fd(O_NONBLOCK, ethertype_msrp)) == INVALID_FD) {
+        return ESP_FAIL;
+    }
+    // Setup MVRP fd
+    if ((l2tap_mvrp_fd = init_l2tap_fd(O_NONBLOCK, ethertype_mvrp)) == INVALID_FD) {
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 
 // Send a frame
-esp_err_t send_frame(eth_frame_t frame)
+esp_err_t send_frame(eth_frame_t *frame)
 {
     int fd;
-
     // Select the fd based on the frame's Ethertype
-    ethertype_t ethertype = ntohs(frame.header.type);
-    //ESP_LOGI(TAG, "Going to use ethertype %d and payload size %d", ethertype, frame.payload_size);
+    ethertype_t ethertype = ntohs(frame->header.type);
 
-    // Setup fd
-    if ((fd = init_l2tap_fd(0, ethertype)) == INVALID_FD) {
-        return ESP_FAIL;
+    // Select the fd based on the given Ethertype
+    switch (ethertype) {
+        case ethertype_gptp:
+            fd = l2tap_gptp_fd;
+            break;
+        case ethertype_msrp:
+            fd = l2tap_msrp_fd;
+            break;
+        case ethertype_mvrp:
+            fd = l2tap_mvrp_fd;
+            break;
+        case ethertype_avtp:
+            fd = l2tap_avtp_fd;
+            break;
+        default:
+            ESP_LOGE(TAG, "Cannot send frame with an unkown Ethertype: %d.", ethertype);
+            return ESP_FAIL;
     }
 
     // Send away!
-    print_frame(FrameTypeAdpdu, frame, frame.payload_size + ETH_HEADER_LEN);
-    ssize_t len = write(fd, &frame, frame.payload_size + ETH_HEADER_LEN);
+    print_frame(FrameTypeAdpdu, frame, frame->payload_size + ETH_HEADER_LEN);
+    ssize_t len = write(fd, frame, frame->payload_size + ETH_HEADER_LEN);
     if (len < 0) {
         ESP_LOGE(TAG, "L2 TAP fd %d write error: errno: %d", fd, errno);
-        //return ESP_FAIL;
+        return ESP_FAIL;
     }
-    close(fd);
+    //close(fd);
     return ESP_OK;
 }
 
@@ -198,7 +185,7 @@ void send_entity_available()
     memcpy(frame.header.dest.addr, bcast_mac_addr, ETH_ADDR_LEN);
     memcpy(&frame.header.type, &ethertype, sizeof(ethertype));
     append_adpdu(entity_available, &frame);
-    send_frame(frame);
+    send_frame(&frame);
 }
 
 // Starup the talker
@@ -228,7 +215,7 @@ void start_talker(esp_netif_iodriver_handle handle) {
             // Send Entity Available message
             send_entity_available();
             ESP_LOGI(TAG, "Entity Available message sent.");
-            vTaskDelay(pdMS_TO_TICKS(2000)); // repeat every ~10sec
+            vTaskDelay(pdMS_TO_TICKS(3000)); // repeat every ~10sec
         }
     }
 }

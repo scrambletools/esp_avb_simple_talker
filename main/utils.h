@@ -31,6 +31,6 @@ typedef enum {
 // Functions
 const char* get_frame_type_name(FrameType type);
 void binary_printf(int v);
-void print_frame(FrameType type, eth_frame_t frame, ssize_t size);
+void print_frame(FrameType type, eth_frame_t *frame, ssize_t size);
 
 #endif /* COMPONENTS_ATDECC_INCLUDE_UTILS_H_ */
