@@ -227,21 +227,21 @@ void app_main()
     init_ethernet();
 
     // Check memory consumption of tasks
-    //char h1_name[] = "watch_gptp"; // usually under 16 chars
+    char h1_name[] = "watch_gptp"; // usually under 16 chars
     //char h2_name[] = "watch_avtp";
     //char h3_name[] = "watch_msrp";
     //char h4_name[] = "watch_mvrp";
-    //TaskHandle_t handy = xTaskGetHandle( "main_task" );
-    //TaskHandle_t h1 = xTaskGetHandle( h1_name );
+    TaskHandle_t handy = xTaskGetHandle( "main_task" );
+    TaskHandle_t h1 = xTaskGetHandle( "watch_gptp" );
     //TaskHandle_t h2 = xTaskGetHandle( h2_name );
     //TaskHandle_t h3 = xTaskGetHandle( h3_name );
     //TaskHandle_t h4 = xTaskGetHandle( h4_name );
-    //while(1) {
-        //ESP_LOGI(TAG, "TASK %s high water mark = %d", "main_task", uxTaskGetStackHighWaterMark(handy));
-        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h1_name, uxTaskGetStackHighWaterMark(h1));
+    while(1) {
+        ESP_LOGI(TAG, "TASK %s high water mark = %d", "main_task", uxTaskGetStackHighWaterMark(handy));
+        ESP_LOGI(TAG, "TASK %s high water mark = %d", "watch_gptp", uxTaskGetStackHighWaterMark(h1));
         //ESP_LOGI(TAG, "TASK %s high water mark = %d", h2_name, uxTaskGetStackHighWaterMark(h2));
         //ESP_LOGI(TAG, "TASK %s high water mark = %d", h3_name, uxTaskGetStackHighWaterMark(h3));
         //ESP_LOGI(TAG, "TASK %s high water mark = %d", h4_name, uxTaskGetStackHighWaterMark(h4));
-        //vTaskDelay(pdMS_TO_TICKS(100));
-    //}
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
 }

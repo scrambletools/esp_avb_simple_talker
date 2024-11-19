@@ -5,6 +5,7 @@
 #include "lwip/prot/ethernet.h" // Ethernet header
 
 #define AVTP_MAX_PAYLOAD_LENGTH 1486
+#define ETH_HEADER_LEN 14
 
 // Basic ethernet frame
 typedef struct {
@@ -23,14 +24,26 @@ typedef enum {
 
 // Useful when doing things like printing frames
 typedef enum {
-	FrameTypeAdpdu = 0,
-	FrameTypeAecpdu = 1,
-	FrameTypeAcmpdu = 2
-} FrameType;
+	avb_frame_gptp_announce,
+	avb_frame_gptp_sync,
+	avb_frame_gptp_follow_up,
+	avb_frame_gptp_pdelay_request,
+	avb_frame_gptp_pdelay_response,
+	avb_frame_gptp_pdelay_follow_up,
+	avb_frame_adp,
+	avb_frame_aecp_command_read,
+	avb_frame_aecp_response_read_entity,
+	avb_frame_acmp,
+	avb_frame_avtp_stream,
+	avb_frame_maap_announce,
+	avb_frame_msrp_domain,
+	avb_frame_msrp_talker_advertise,
+	avb_frame_msrp_listener,
+	avb_frame_mvrp_vlan_identifier
+} avb_frame_t;
 
 // Functions
-const char* get_frame_type_name(FrameType type);
+const char* get_frame_type_name(avb_frame_t type);
 void binary_printf(int v);
-void print_frame(FrameType type, eth_frame_t *frame, ssize_t size);
 
 #endif /* COMPONENTS_ATDECC_INCLUDE_UTILS_H_ */

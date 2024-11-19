@@ -665,7 +665,7 @@ static uint8_t acmp_connect_rx_response[] = {
     0x00,0x00 // connected_listeners_entries: 0
 }; // 56 bytes
 
-// append adpdu based on message type and set payload_size
+// Append adpdu to a frame based on message type and set payload_size
 void append_adpdu(adpdu_t type, eth_frame_t *frame) {
     switch (type) {
         case entity_available:
@@ -674,5 +674,61 @@ void append_adpdu(adpdu_t type, eth_frame_t *frame) {
             break;
         default:
             ESP_LOGE(TAG, "Can't create ADPDU, message type not supported yet.");
+    }
+}
+
+// Print out the frame details
+void print_atdecc_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+
+    if (size <= ETH_HEADER_LEN) {
+        ESP_LOGI(TAG, "Can't print frame, too small.");
+    }
+    else {
+        ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);
+                ESP_LOG_BUFFER_HEX("           destination", &frame->header.dest, (6));
+                ESP_LOG_BUFFER_HEX("                source", &frame->header.src, (6));
+                ESP_LOG_BUFFER_HEX("             etherType", &frame->header.type, (2));
+        switch (type) {
+            case avb_frame_adp:
+                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX(" streamValidVerMsgType", frame->payload + 1, (1));
+                ESP_LOG_BUFFER_HEX("  validTimeCtrlDataLen", frame->payload + 2, (2));
+                ESP_LOG_BUFFER_HEX("              entityID", frame->payload + 4, (8));
+                ESP_LOG_BUFFER_HEX("         entityModelID", frame->payload + 12, (8));
+                ESP_LOG_BUFFER_HEX("    entityCapabilities", frame->payload + 20, (4));
+                ESP_LOG_BUFFER_HEX("   talkerStreamSources", frame->payload + 24, (2));
+                ESP_LOG_BUFFER_HEX("    talkerCapabilities", frame->payload + 26, (2));
+                ESP_LOG_BUFFER_HEX("   listenerStreamSinks", frame->payload + 28, (2));
+                ESP_LOG_BUFFER_HEX("  listenerCapabilities", frame->payload + 30, (2));
+                ESP_LOG_BUFFER_HEX("controllerCapabilities", frame->payload + 32, (4));
+                ESP_LOG_BUFFER_HEX("        availableIndex", frame->payload + 36, (4));
+                ESP_LOG_BUFFER_HEX("     gptpGrandmasterID", frame->payload + 40, (8));
+                ESP_LOG_BUFFER_HEX("      gptpDomainNumber", frame->payload + 48, (1));
+                ESP_LOG_BUFFER_HEX("         reserved8bits", frame->payload + 49, (1));
+                ESP_LOG_BUFFER_HEX("    currentConfigIndex", frame->payload + 50, (2));
+                ESP_LOG_BUFFER_HEX("  identifyControlIndex", frame->payload + 52, (2));
+                ESP_LOG_BUFFER_HEX("        interfaceIndex", frame->payload + 54, (2));
+                ESP_LOG_BUFFER_HEX("         associationID", frame->payload + 56, (8));
+                ESP_LOG_BUFFER_HEX("        reserved32bits", frame->payload + 64, (4));
+                break;
+            case avb_frame_aecp_command_read:
+                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("               payload", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                // Need to break out all fields
+                break;
+            case avb_frame_aecp_response_read_entity:
+                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("               payload", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                // Need to break out all fields
+                break;
+            case avb_frame_acmp:
+                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("               payload", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                // Need to break out all fields
+                break;
+            default:
+                ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+        }
+        ESP_LOGI(TAG, "*** End of Frame ***");
     }
 }

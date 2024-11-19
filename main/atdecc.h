@@ -29,5 +29,6 @@ typedef enum {
 
 // Functions
 void append_adpdu(adpdu_t type, eth_frame_t *adpdu);
+void print_atdecc_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size);
 
 #endif /* COMPONENTS_ATDECC_INCLUDE_ATDECC_H_ */

@@ -54,10 +54,11 @@ error:
 // frame logger
 static void frame_watcher_task(void *pvParameters)
 {
-    ESP_LOGI(TAG, "Started task to log frames.");
-
     // Grab config from the task params
-    ethertype_t ethertype = (ethertype_t)pvParameters;
+    ethertype_t *type = (ethertype_t*)pvParameters;
+    ethertype_t ethertype = *type;
+
+    ESP_LOGI(TAG, "Started task to log frames with ethertype %d.", ethertype);
 
     uint8_t rx_buffer[128];
     int fd;
@@ -96,7 +97,7 @@ static void frame_watcher_task(void *pvParameters)
             ssize_t len = read(fd, rx_buffer, sizeof(rx_buffer));
             if (len > 0) {
                 eth_frame_t *recv_msg = (eth_frame_t *)rx_buffer;
-                ESP_LOGI(TAG, "fd %d received %d bytes from %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", fd,
+                ESP_LOGI("T-GPTP", "fd %d received %d bytes from %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", fd,
                             len, recv_msg->header.src.addr[0], recv_msg->header.src.addr[1], recv_msg->header.src.addr[2],
                             recv_msg->header.src.addr[3], recv_msg->header.src.addr[4], recv_msg->header.src.addr[5]);
             } else {
@@ -116,8 +117,7 @@ error:
 }
 
 // Setup l2tap file descripters for all Ethertypes
-esp_err_t init_all_l2tap_fds()
-{
+esp_err_t init_all_l2tap_fds() {
     //Setup gPTP fd
     if ((l2tap_gptp_fd = init_l2tap_fd(O_NONBLOCK, ethertype_gptp)) == INVALID_FD) {
         return ESP_FAIL;
@@ -137,9 +137,31 @@ esp_err_t init_all_l2tap_fds()
     return ESP_OK;
 }
 
+void print_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+
+    static const char *TAG = "UTIL";
+    if (size < ETH_HEADER_LEN) {
+        ESP_LOGI(TAG, "Can't print frame, too small.");
+    }
+    else {
+        switch (type) {
+            case avb_frame_gptp_announce ... avb_frame_gptp_pdelay_follow_up:
+                print_gptp_frame(type, frame, size);
+                break;
+            case avb_frame_adp ... avb_frame_acmp:
+                print_atdecc_frame(type, frame, size);
+                break;
+            case avb_frame_avtp_stream ... avb_frame_mvrp_vlan_identifier:
+                print_avtp_frame(type, frame, size);
+                break;
+            default:
+                ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+        }
+    }
+}
+
 // Send a frame
-esp_err_t send_frame(eth_frame_t *frame)
-{
+esp_err_t send_frame(eth_frame_t *frame) {
     int fd;
     // Select the fd based on the frame's Ethertype
     ethertype_t ethertype = ntohs(frame->header.type);
@@ -164,7 +186,7 @@ esp_err_t send_frame(eth_frame_t *frame)
     }
 
     // Send away!
-    print_frame(FrameTypeAdpdu, frame, frame->payload_size + ETH_HEADER_LEN);
+    print_frame(avb_frame_adp, frame, frame->payload_size + ETH_HEADER_LEN);
     ssize_t len = write(fd, frame, frame->payload_size + ETH_HEADER_LEN);
     if (len < 0) {
         ESP_LOGE(TAG, "L2 TAP fd %d write error: errno: %d", fd, errno);
@@ -207,15 +229,15 @@ void start_talker(esp_netif_iodriver_handle handle) {
         ESP_LOGI(TAG, "All FDs are open.");
         
         // Start watching for gPTP frames
-        ethertype_t type = ethertype_gptp;
-        //xTaskCreate(frame_watcher_task, "watch_gptp", 12288, &type, 5, NULL);
+        static ethertype_t type = ethertype_avtp;
+        xTaskCreate(frame_watcher_task, "watch_gptp", 6144, &type, 5, NULL);
 
         // Send out stuff
-        while (true) {
-            // Send Entity Available message
-            send_entity_available();
-            ESP_LOGI(TAG, "Entity Available message sent.");
-            vTaskDelay(pdMS_TO_TICKS(3000)); // repeat every ~10sec
-        }
+        // while (true) {
+        //     // Send Entity Available message
+        //     send_entity_available();
+        //     ESP_LOGI(TAG, "Entity Available message sent.");
+        //     vTaskDelay(pdMS_TO_TICKS(10000)); // repeat every ~10sec
+        // }
     }
 }

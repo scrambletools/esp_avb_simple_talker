@@ -150,3 +150,84 @@ static uint8_t gptp_pdelay_reponse_follow_up[] = {
     0x14,0x98,0x77,0x40,0xc7,0x88,0x00,0x02, // requestingSourcePortIdentity
     0x00,0x01 // requestingSourcePortId: 1
 }; // 54 bytes
+
+// Print out the frame details
+void print_gptp_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+
+    //static const int MINSIZE = 14; // 46
+    if (size <= ETH_HEADER_LEN) {
+        ESP_LOGI(TAG, "Can't print frame, too small.");
+    }
+    else {
+        ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);
+                ESP_LOG_BUFFER_HEX("                        destination", &frame->header.dest, (6));
+                ESP_LOG_BUFFER_HEX("                             source", &frame->header.src, (6));
+                ESP_LOG_BUFFER_HEX("                          etherType", &frame->header.type, (2));
+                ESP_LOG_BUFFER_HEX("             majorSdoId,messageType", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("         minorVersionPtp,versionPtp", frame->payload + 1, (1));
+                ESP_LOG_BUFFER_HEX("                      messageLength", frame->payload + 2, (2));
+                ESP_LOG_BUFFER_HEX("                       domainNumber", frame->payload + 4, (1));
+                ESP_LOG_BUFFER_HEX("                         minorSdoId", frame->payload + 5, (1));
+                ESP_LOG_BUFFER_HEX("flags,ptpTimescale,ptpUtcReasonable", frame->payload + 6, (2));
+                ESP_LOG_BUFFER_HEX("       correctionField-correctionNs", frame->payload + 8, (6));
+                ESP_LOG_BUFFER_HEX("    correctionField-correctionSubNs", frame->payload + 14, (2));
+                ESP_LOG_BUFFER_HEX("                messageTypeSpecific", frame->payload + 16, (4));
+                ESP_LOG_BUFFER_HEX("                      clockIdentity", frame->payload + 20, (8));
+                ESP_LOG_BUFFER_HEX("                       sourcePortID", frame->payload + 28, (2));
+                ESP_LOG_BUFFER_HEX("                         sequenceID", frame->payload + 30, (2));
+                ESP_LOG_BUFFER_HEX("                       controlField", frame->payload + 32, (1));
+                ESP_LOG_BUFFER_HEX("                   logMessagePeriod", frame->payload + 33, (1));
+        switch (type) {
+            case avb_frame_gptp_announce:
+                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
+                ESP_LOG_BUFFER_HEX("             originCurrentUTCOffset", frame->payload + 44, (2));
+                ESP_LOG_BUFFER_HEX("                      reserved8bits", frame->payload + 46, (1));
+                ESP_LOG_BUFFER_HEX("                          priority1", frame->payload + 47, (1));
+                ESP_LOG_BUFFER_HEX("              grandmasterClockClass", frame->payload + 48, (1));
+                ESP_LOG_BUFFER_HEX("           grandmasterClockAccuracy", frame->payload + 49, (1));
+                ESP_LOG_BUFFER_HEX("           grandmasterClockVariance", frame->payload + 50, (2));
+                ESP_LOG_BUFFER_HEX("                          priority2", frame->payload + 52, (1));
+                ESP_LOG_BUFFER_HEX("           grandmasterClockIdentity", frame->payload + 53, (8));
+                ESP_LOG_BUFFER_HEX("                  localStepsRemoved", frame->payload + 61, (2));
+                ESP_LOG_BUFFER_HEX("                         timeSource", frame->payload + 63, (1));
+                ESP_LOG_BUFFER_HEX("                 tlvType(pathTrace)", frame->payload + 64, (2));
+                ESP_LOG_BUFFER_HEX("           pathTraceTlv-lengthField", frame->payload + 66, (2));
+                ESP_LOG_BUFFER_HEX("         pathTraceTlv(pathSequence)", frame->payload + 68, (8));
+                break;
+            case avb_frame_gptp_sync:
+                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
+                break;
+            case avb_frame_gptp_follow_up:
+                ESP_LOG_BUFFER_HEX("    preciseOriginTimestamp(seconds)", frame->payload + 34, (6));
+                ESP_LOG_BUFFER_HEX("preciseOriginTimestamp(nanoseconds)", frame->payload + 40, (4));
+                ESP_LOG_BUFFER_HEX("     tlvType(organizationExtension)", frame->payload + 44, (2));
+                ESP_LOG_BUFFER_HEX("                     tlvLengthField", frame->payload + 46, (2));
+                ESP_LOG_BUFFER_HEX("                 tlv-organizationId", frame->payload + 48, (3));
+                ESP_LOG_BUFFER_HEX("            tlv-organizationSubType", frame->payload + 51, (3));
+                ESP_LOG_BUFFER_HEX("     tlv-cumulativeScaledRateOffset", frame->payload + 54, (4));
+                ESP_LOG_BUFFER_HEX("            tlv-gmTimeBaseIndicator", frame->payload + 58, (2));
+                ESP_LOG_BUFFER_HEX("              tlv-lastGMPhaseChange", frame->payload + 70, (12));
+                ESP_LOG_BUFFER_HEX("         tlv-scaledLastGmFreqChange", frame->payload + 74, (4));
+                break;
+            case avb_frame_gptp_pdelay_request:
+                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
+                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 44, (10));
+                break;
+            case avb_frame_gptp_pdelay_response:
+                ESP_LOG_BUFFER_HEX("       requestReceiptTimestamp(sec)", frame->payload + 34, (6));
+                ESP_LOG_BUFFER_HEX("   requestReceiptTimestamp(nanosec)", frame->payload + 40, (4));
+                ESP_LOG_BUFFER_HEX("       requestingSourcePortIdentity", frame->payload + 44, (8));
+                ESP_LOG_BUFFER_HEX("             requestingSourcePortId", frame->payload + 52, (2));
+                break;
+            case avb_frame_gptp_pdelay_follow_up:
+                ESP_LOG_BUFFER_HEX("       responseOriginTimestamp(sec)", frame->payload + 34, (6));
+                ESP_LOG_BUFFER_HEX("   responseOriginTimestamp(nanosec)", frame->payload + 40, (4));
+                ESP_LOG_BUFFER_HEX("       requestingSourcePortIdentity", frame->payload + 44, (8));
+                ESP_LOG_BUFFER_HEX("             requestingSourcePortId", frame->payload + 52, (2));
+                break;
+            default:
+                ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+        }
+        ESP_LOGI(TAG, "*** End of Frame ***");
+    }
+}

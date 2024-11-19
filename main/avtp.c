@@ -102,3 +102,56 @@ static uint8_t mvrp_vlan_identifier[] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00, // padding
     0x00,0x00,0x00,0x00,0x00,0x00 // padding
 }; // 50 bytes
+
+// Print out the frame details for AVTP streams, MSRP and MVRP frames
+void print_avtp_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+
+    if (size <= ETH_HEADER_LEN) {
+        ESP_LOGI(TAG, "Can't print frame, too small.");
+    }
+    else {
+        ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);
+                ESP_LOG_BUFFER_HEX("           destination", &frame->header.dest, (6));
+                ESP_LOG_BUFFER_HEX("                source", &frame->header.src, (6));
+                ESP_LOG_BUFFER_HEX("             etherType", &frame->header.type, (2));
+        switch (type) {
+            case avb_frame_avtp_stream:
+                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                // Need to break out all fields
+                break;
+            case avb_frame_maap_announce:
+                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                // Need to break out all fields
+                break;
+            case avb_frame_msrp_domain:
+                ESP_LOG_BUFFER_HEX("       protocolVersion", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("         attributeType", frame->payload + 1, (1));
+                ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 2, (size - ETH_HEADER_LEN - 2));
+                // Need to break out all fields
+                break;
+            case avb_frame_msrp_talker_advertise:
+                ESP_LOG_BUFFER_HEX("       protocolVersion", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("         attributeType", frame->payload + 1, (1));
+                ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 2, (size - ETH_HEADER_LEN - 2));
+                // Need to break out all fields
+                break;
+            case avb_frame_msrp_listener:
+                ESP_LOG_BUFFER_HEX("       protocolVersion", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("         attributeType", frame->payload + 1, (1));
+                ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 2, (size - ETH_HEADER_LEN - 2));
+                // Need to break out all fields
+                break;
+            case avb_frame_mvrp_vlan_identifier:
+                ESP_LOG_BUFFER_HEX("       protocolVersion", frame->payload, (1));
+                ESP_LOG_BUFFER_HEX("         attributeType", frame->payload + 1, (1));
+                ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 2, (size - ETH_HEADER_LEN - 2));
+                // Need to break out all fields
+                break;
+            default:
+                ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+        }
+        ESP_LOGI(TAG, "*** End of Frame ***");
+    }
+}

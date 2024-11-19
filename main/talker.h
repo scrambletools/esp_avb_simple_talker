@@ -22,10 +22,10 @@
 
 // Functions
 int init_l2tap_fd(int flags, ethertype_t ethertype);
-int init_l2tap_fd_for_sending(ethertype_t ethertype);
 void start_talker(esp_netif_iodriver_handle handle);
 static void frame_watcher_task(void *pvParameters);
 esp_err_t init_all_l2tap_fds();
+void print_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size);
 esp_err_t send_frame(eth_frame_t *frame);
 void send_entity_available();
 
