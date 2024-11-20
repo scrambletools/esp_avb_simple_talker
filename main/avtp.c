@@ -103,8 +103,72 @@ static uint8_t mvrp_vlan_identifier[] = {
     0x00,0x00,0x00,0x00,0x00,0x00 // padding
 }; // 50 bytes
 
+// Detect which kind of frame it is; AVTP, MSRP or MVRP
+avb_frame_type_t detect_avtp_frame_type(ethertype_t *type, eth_frame_t *frame, ssize_t size) {
+    ethertype_t ethertype = *type;
+    avb_frame_type_t frame_type = avb_frame_unknown;
+    if (size <= ETH_HEADER_LEN) {
+        ESP_LOGI(TAG, "Can't detect frame, too small.");
+    }
+    else {
+        uint8_t attribute_type; // Used for MSRP and MVRP
+        memcpy(&attribute_type, &frame->payload + 1, (1));
+        switch(ethertype) {
+            case ethertype_avtp:
+                uint8_t subtype;
+                memcpy(&subtype, &frame->payload, (1));
+                switch(subtype) {
+                    case avtp_subtype_aaf:
+                        frame_type = avb_frame_avtp_stream;
+                        break;
+                    case avtp_subtype_maap:
+                        uint8_t message_type;
+                        memcpy(&message_type, &frame->payload + 1, (1)); // 4 bits
+                        message_type = message_type & 0x0f; // mask out the left 4 bits
+                        switch (message_type) { 
+                            case 0x03: // maap announce
+                                frame_type = avb_frame_maap_announce;
+                                break;
+                            default:
+                                ESP_LOGI(TAG, "Can't detect maap frame with unknown message type: %d", message_type);
+                        }
+                        break;
+                    default:
+                        ESP_LOGI(TAG, "Can't detect avtp frame with unknown subtype: %d", subtype);
+                }
+                break;
+            case ethertype_msrp:
+                switch (attribute_type) { 
+                    case msrp_attribute_type_talker_advertise:
+                        frame_type = avb_frame_msrp_talker_advertise;
+                        break;
+                    case msrp_attribute_type_listener:
+                        frame_type = avb_frame_msrp_listener;
+                        break;
+                    case msrp_attribute_type_domain:
+                        frame_type = avb_frame_msrp_domain;
+                        break;
+                    default:
+                        ESP_LOGI(TAG, "Can't detect msrp frame with unknown attribute type: %d", attribute_type);
+                }
+                frame_type = avb_frame_msrp_domain;
+                break;
+            case ethertype_mvrp:
+                if (attribute_type == 0x01) { // vlan identifier
+                    frame_type = avb_frame_mvrp_vlan_identifier;
+                }
+                else {
+                    ESP_LOGI(TAG, "Can't detect mvrp frame with unknown attribute type: %d", attribute_type);
+                }
+            default:
+                ESP_LOGI(TAG, "Can't detect frame with unknown ethertype: %d", ethertype);
+        }
+    }
+    return frame_type;
+}
+
 // Print out the frame details for AVTP streams, MSRP and MVRP frames
-void print_avtp_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+void print_avtp_frame(avb_frame_type_t type, eth_frame_t *frame, ssize_t size) {
 
     if (size <= ETH_HEADER_LEN) {
         ESP_LOGI(TAG, "Can't print frame, too small.");

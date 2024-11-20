@@ -666,19 +666,96 @@ static uint8_t acmp_connect_rx_response[] = {
 }; // 56 bytes
 
 // Append adpdu to a frame based on message type and set payload_size
-void append_adpdu(adpdu_t type, eth_frame_t *frame) {
+void append_adpdu(adp_message_type_t type, eth_frame_t *frame) {
     switch (type) {
         case entity_available:
             memcpy(frame->payload, adp_entity_available, sizeof(adp_entity_available));
             frame->payload_size = sizeof(adp_entity_available);
             break;
         default:
-            ESP_LOGE(TAG, "Can't create ADPDU, message type not supported yet.");
+            ESP_LOGE(TAG, "Can't create ADPDU, message type (%d) not supported yet.", type);
     }
 }
 
+// Detect which kind of ATDECC frame it is; assumes Ethertype is AVTP
+avb_frame_type_t detect_atdecc_frame_type(eth_frame_t *frame, ssize_t size) {
+    avb_frame_type_t frame_type = avb_frame_unknown;
+    if (size <= ETH_HEADER_LEN) {
+        ESP_LOGI(TAG, "Can't detect frame, too small.");
+    }
+    else {
+        uint8_t subtype;
+        memcpy(&subtype, &frame->payload, (1));
+        switch(subtype) {
+            case avtp_subtype_adp:
+                frame_type = avb_frame_adp; // all adp frames have same format
+                break;
+            case avtp_subtype_aecp:
+                uint8_t message_type;
+                uint16_t command_type;
+                memcpy(&message_type, &frame->payload + 1, (1)); // 4 bits
+                message_type = message_type & 0x0f; // mask out the left 4 bits
+                memcpy(&command_type, &frame->payload + 21, (2)); // 14 bits but left 2 bits are likely 0
+                command_type = ntohs(command_type); // flip endianness
+                switch (message_type) {
+                    case aem_command:
+                        switch (command_type) {
+                            case aecp_command_acquire_entity:
+                                frame_type = avb_frame_aecp_acquire_entity;
+                                break;
+                            case aecp_command_lock_entity:
+                                frame_type = avb_frame_aecp_lock_entity;
+                                break;
+                            case aecp_command_entity_available:
+                                frame_type = avb_frame_aecp_command_entity_available;
+                                break;
+                            case aecp_command_controller_available:
+                                frame_type = avb_frame_aecp_controller_available;
+                                break;
+                            case aecp_command_read_descriptor:
+                                frame_type = avb_frame_aecp_command_read_descriptor;
+                                break;
+                            default:
+                                ESP_LOGI(TAG, "Can't detect aecp command frame with unknown command type: %d", command_type);
+                        }
+                        break;
+                    case aem_response:
+                        switch (command_type) {
+                            case aecp_command_acquire_entity:
+                                frame_type = avb_frame_aecp_acquire_entity;
+                                break;
+                            case aecp_command_lock_entity:
+                                frame_type = avb_frame_aecp_lock_entity;
+                                break;
+                            case aecp_command_entity_available:
+                                frame_type = avb_frame_aecp_response_entity_available;
+                                break;
+                            case aecp_command_controller_available:
+                                frame_type = avb_frame_aecp_controller_available;
+                                break;
+                            case aecp_command_read_descriptor:
+                                frame_type = avb_frame_aecp_response_read_entity;
+                                break;
+                            default:
+                                ESP_LOGI(TAG, "Can't detect aecp response frame with unknown command type: %d", command_type);
+                        }
+                        break;
+                    default:
+                        ESP_LOGI(TAG, "Can't detect aecp frame with unknown message type: %d", message_type);
+                }
+                break;
+            case avtp_subtype_acmp:
+                frame_type = avb_frame_acmp;
+                break;
+            default:
+                ESP_LOGI(TAG, "Can't detect avtp frame with unknown subtype: %d", subtype);
+        }
+    }
+    return frame_type;
+}
+
 // Print out the frame details
-void print_atdecc_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+void print_atdecc_frame(avb_frame_type_t type, eth_frame_t *frame, ssize_t size) {
 
     if (size <= ETH_HEADER_LEN) {
         ESP_LOGI(TAG, "Can't print frame, too small.");
@@ -711,7 +788,7 @@ void print_atdecc_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
                 ESP_LOG_BUFFER_HEX("         associationID", frame->payload + 56, (8));
                 ESP_LOG_BUFFER_HEX("        reserved32bits", frame->payload + 64, (4));
                 break;
-            case avb_frame_aecp_command_read:
+            case avb_frame_aecp_command_read_descriptor:
                 ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
                 ESP_LOG_BUFFER_HEX("               payload", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
                 // Need to break out all fields

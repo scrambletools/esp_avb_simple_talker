@@ -82,6 +82,7 @@ static void frame_watcher_task(void *pvParameters)
             goto error;
     }
 
+    // Listen loop
     while (1) {
         struct timeval tv;
         tv.tv_sec = 5;
@@ -100,6 +101,33 @@ static void frame_watcher_task(void *pvParameters)
                 ESP_LOGI("T-GPTP", "fd %d received %d bytes from %.2x:%.2x:%.2x:%.2x:%.2x:%.2x", fd,
                             len, recv_msg->header.src.addr[0], recv_msg->header.src.addr[1], recv_msg->header.src.addr[2],
                             recv_msg->header.src.addr[3], recv_msg->header.src.addr[4], recv_msg->header.src.addr[5]);
+                // Set the frame type for proper handling
+                avb_frame_type_t frame_type = avb_frame_unknown;
+                switch (ethertype) {
+                    case ethertype_gptp:
+                        frame_type = detect_gptp_frame_type(recv_msg, len);
+                        break;
+                    case ethertype_avtp:
+                        uint8_t subtype;
+                        memcpy(&subtype, &recv_msg->payload, (1));
+                        if (subtype == avtp_subtype_adp || subtype == avtp_subtype_aecp || subtype == avtp_subtype_acmp) {
+                            frame_type = detect_atdecc_frame_type(recv_msg, len);
+                        }
+                        else {
+                            frame_type = detect_avtp_frame_type(&ethertype, recv_msg, len);
+                        }
+                        break;
+                    case ethertype_msrp:
+                        frame_type = detect_avtp_frame_type(&ethertype, recv_msg, len);
+                        break;
+                    case ethertype_mvrp:
+                        frame_type = detect_avtp_frame_type(&ethertype, recv_msg, len);
+                        break;
+                    default:
+                        ESP_LOGE(TAG, "Cannot detect frame with an unkown Ethertype: %d.", ethertype);
+                        goto error;
+                }
+                print_frame(frame_type, recv_msg, len);
             } else {
                 ESP_LOGE(TAG, "L2 TAP fd %d read error: errno %d", fd, errno);
                 break;
@@ -137,9 +165,8 @@ esp_err_t init_all_l2tap_fds() {
     return ESP_OK;
 }
 
-void print_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+void print_frame(avb_frame_type_t type, eth_frame_t *frame, ssize_t size) {
 
-    static const char *TAG = "UTIL";
     if (size < ETH_HEADER_LEN) {
         ESP_LOGI(TAG, "Can't print frame, too small.");
     }
@@ -155,7 +182,7 @@ void print_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
                 print_avtp_frame(type, frame, size);
                 break;
             default:
-                ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+                ESP_LOGI(TAG, "Can't print frame of unknown frame type.");
         }
     }
 }
@@ -229,8 +256,14 @@ void start_talker(esp_netif_iodriver_handle handle) {
         ESP_LOGI(TAG, "All FDs are open.");
         
         // Start watching for gPTP frames
-        static ethertype_t type = ethertype_avtp;
-        xTaskCreate(frame_watcher_task, "watch_gptp", 6144, &type, 5, NULL);
+        static ethertype_t type1 = ethertype_gptp;
+        xTaskCreate(frame_watcher_task, "watch_gptp", 6144, &type1, 5, NULL);
+        static ethertype_t type2 = ethertype_avtp;
+        xTaskCreate(frame_watcher_task, "watch_avtp", 6144, &type2, 5, NULL);
+        static ethertype_t type3 = ethertype_msrp;
+        xTaskCreate(frame_watcher_task, "watch_msrp", 6144, &type3, 5, NULL);
+        static ethertype_t type4 = ethertype_mvrp;
+        xTaskCreate(frame_watcher_task, "watch_mvrp", 6144, &type4, 5, NULL);
 
         // Send out stuff
         // while (true) {

@@ -151,8 +151,46 @@ static uint8_t gptp_pdelay_reponse_follow_up[] = {
     0x00,0x01 // requestingSourcePortId: 1
 }; // 54 bytes
 
+// Detect which kind of gPTP frame it is; assumes Ethertype is PTP
+avb_frame_type_t detect_gptp_frame_type(eth_frame_t *frame, ssize_t size) {
+    avb_frame_type_t frame_type = avb_frame_unknown;
+    if (size <= ETH_HEADER_LEN) {
+        ESP_LOGI(TAG, "Can't detect frame, too small.");
+    }
+    else {
+        uint8_t message_type;
+        memcpy(&message_type, &frame->payload, (1)); // 4 bits
+        message_type = message_type & 0x0f; // mask out the left 4 bits
+        switch(message_type) {
+            case gptp_message_type_announce:
+                frame_type = avb_frame_gptp_announce;
+                break;
+            case gptp_message_type_sync:
+                frame_type = avb_frame_gptp_sync;
+                break;
+            case gptp_message_type_follow_up:
+                frame_type = avb_frame_gptp_follow_up;
+                break;
+            case gptp_message_type_pdelay_request:
+                frame_type = avb_frame_gptp_pdelay_request;
+                break;
+            case gptp_message_type_pdelay_response:
+                frame_type = avb_frame_gptp_pdelay_response;
+                break;
+            case gptp_message_type_pdelay_follow_up:
+                frame_type = avb_frame_gptp_pdelay_follow_up;
+                break;
+            default:
+                ESP_LOGI(TAG, "Can't detect gPTP frame with unknown message type: %d", message_type);
+        }
+    }
+    return frame_type;
+}
+
+
+
 // Print out the frame details
-void print_gptp_frame(avb_frame_t type, eth_frame_t *frame, ssize_t size) {
+void print_gptp_frame(avb_frame_type_t type, eth_frame_t *frame, ssize_t size) {
 
     //static const int MINSIZE = 14; // 46
     if (size <= ETH_HEADER_LEN) {
