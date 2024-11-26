@@ -1,23 +1,23 @@
 #include "atdecc.h"
 
 // Define logging tag
-static const char *TAG = "ATDECC";
+static const char *TAG = "DECC";
 
 ////////////
 // ATDECC discovery messages
 ////////////
 
-// Test entity available
-static uint8_t adp_entity_available[] = {
+// Template entity available
+static uint8_t frame_template_adp_entity_available[] = {
     0xfa, // avtp subtype: atdecc discovery (0xfa)
     0x00, // atvp stream id valid: false (0... ....), avtp version: 0x0 (.000 ....), msg type: entity available (.... 0000)
     0x40,0x38, // valid time: 8 (0100 0... .... ....),control data length: 56 (.... .000 0011 1000)
     0x15,0x98,0x77,0x40,0xc7,0x88,0x80,0x00, // entity id
     0x00,0x0d,0x93,0x00,0x00,0x00,0x00,0x08, // entity model id
     0x00,0x00,0x85,0x8a, // entity capabilities: ADRESS_ACCESS=true,AEM=true,VENDOR_UNIQUE=true,CLASS_A=true,gPTP=true
-    0x00,0x02, // talker stream sources: 2
+    0x00,0x01, // talker stream sources: 1
     0x48,0x01, // talker capabilities: IMPLEMENTED=true,MEDIA_CLOCK_SOURCE=true,AUDIO_SOURCE=true
-    0x00,0x02, // listener stream sinks: 2
+    0x00,0x00, // listener stream sinks: 0
     0x48,0x01, // listener capabilities: IMPLEMENTED=true,MEDIA_CLOCK_SINK=true,AUDIO_SINK=true
     0x00,0x00,0x00,0x00, // controller capabilities: not implemented
     0x00,0x00,0x15,0x80, // available index
@@ -31,8 +31,11 @@ static uint8_t adp_entity_available[] = {
     0x00,0x00,0x00,0x00 // reserved
 }; // 68 bytes
 
-// Test entity discover
-static uint8_t adp_entity_discover[] = {
+// Template entity departing
+static uint8_t frame_template_adp_entity_departing[] = {};
+
+// Template entity discover
+static uint8_t frame_template_adp_entity_discover[] = {
     0xfa, // avtp subtype: atdecc discovery (0xfa)
     0x02, // atvp stream id valid: false (0... ....), avtp version: 0x0 (.000 ....), msg type: entity discover (.... 0010)
     0x40,0x38, // valid time: 8 (0100 0... .... ....),control data length: 56 (.... .000 0011 1000)
@@ -62,8 +65,32 @@ static uint8_t adp_entity_discover[] = {
 // Note for atdecc: The control_data_length field for AECP is the number of octets following 
 // the target_entity_id, but is limited to a maximum of 524.
 
-// Test get configuration command
-static uint8_t aecp_command_get_configuration[] = {
+// Template acquire entity command
+static uint8_t frame_template_aecp_command_acquire_entity[] = {};
+
+// Template acquire entity response
+static uint8_t frame_template_aecp_response_acquire_entity[] = {};
+
+// Template lock entity command
+static uint8_t frame_template_aecp_command_lock_entity[] = {};
+
+// Template lock entity response
+static uint8_t frame_template_aecp_response_lock_entity[] = {};
+
+// Template entity available command
+static uint8_t frame_template_aecp_command_entity_available[] = {};
+
+// Template entity available response
+static uint8_t frame_template_aecp_response_entity_available[] = {};
+
+// Template controller available command
+static uint8_t frame_template_aecp_command_controller_available[] = {};
+
+// Template controller available response
+static uint8_t frame_template_aecp_response_controller_available[] = {};
+
+// Template get configuration command
+static uint8_t frame_template_aecp_command_get_configuration[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x00, // stream id valid: false, avtp version: 0x0, message type: aem_command (0)
     0x00,0x0c, // status: success (0x00), control data length: 12
@@ -75,8 +102,8 @@ static uint8_t aecp_command_get_configuration[] = {
     0x00,0x00,0x00,0x00,0x00,0x00 // padding (not counted in control data length)
 }; // 46 bytes
 
-// Test get configuration response
-static uint8_t aecp_response_get_configuration[] = {
+// Template get configuration response
+static uint8_t frame_template_aecp_response_get_configuration[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x22, // status: success (0x00), control data length: 16
@@ -90,8 +117,8 @@ static uint8_t aecp_response_get_configuration[] = {
     0x00,0x00 // padding (not counted in control data length)
 }; // 46 bytes
 
-// Test read entity descriptor command
-static uint8_t aecp_command_read_descriptor_entity[] = {
+// Template read entity descriptor command
+static uint8_t frame_template_aecp_command_read_descriptor_entity[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x00, // stream id valid: false, avtp version: 0x0, message type: aem_command (0)
     0x00,0x14, // status: success (0x00), control data length: 20
@@ -106,8 +133,8 @@ static uint8_t aecp_command_read_descriptor_entity[] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 // padding (not counted in control data length)
 }; // 46 bytes
 
-// Test read entity descriptor response
-static uint8_t aecp_response_read_descriptor_entity[] = {
+// Template read entity descriptor response
+static uint8_t frame_template_aecp_response_read_descriptor_entity[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x01,0x48, // status: success (0x00), control data length: 328
@@ -151,8 +178,8 @@ static uint8_t aecp_response_read_descriptor_entity[] = {
     0x00,0x00 // current configuration: 0
 }; // 340 bytes
 
-// Test read configuration descriptor command
-static uint8_t aecp_command_read_descriptor_configuration[] = {
+// Template read configuration descriptor command
+static uint8_t frame_template_aecp_command_read_descriptor_configuration[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x00, // stream id valid: false, avtp version: 0x0, message type: aem_command (0)
     0x00,0x14, // status: success (0x00), control data length: 20
@@ -167,8 +194,8 @@ static uint8_t aecp_command_read_descriptor_configuration[] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 // padding
 }; // 46 bytes
 
-// Test read configuration descriptor response
-static uint8_t aecp_response_read_descriptor_configuration[] = {
+// Template read configuration descriptor response
+static uint8_t frame_template_aecp_response_read_descriptor_configuration[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x86, // status: success (0x00), control data length: 134 ?
@@ -205,8 +232,8 @@ static uint8_t aecp_response_read_descriptor_configuration[] = {
     0x00,0x01 // count: 1
 }; // 146 bytes ?
 
-// Test read audio_unit descriptor response
-static uint8_t aecp_response_read_descriptor_audio_unit[] = {
+// Template read audio_unit descriptor response
+static uint8_t frame_template_aecp_response_read_descriptor_audio_unit[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0xb8, // status: success (0x00), control data length: 184 ?
@@ -288,8 +315,8 @@ static uint8_t aecp_response_read_descriptor_audio_unit[] = {
 // 0x4 = INT_16BIT 16-bit integer PCM
 // 0x5 = AES3_32BIT 32-bit AES3 format. See 7.4 and Annex K. AES3
 
-// Test read stream_input descriptor response (reduced number of formats)
-static uint8_t aecp_response_read_descriptor_stream_input[] = {
+// Template read stream_input descriptor response (reduced number of formats)
+static uint8_t frame_template_aecp_response_read_descriptor_stream_input[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0xb2, // status: success (0x00), control_data_length: 178
@@ -341,8 +368,8 @@ static uint8_t aecp_response_read_descriptor_stream_input[] = {
     0x00,0x40,0xc0,0x00 // 3rd stream format: channels_per_frame: 1, samples_per_frame: 12
 }; // 190 bytes
 
-// Test read stream_output descriptor response (reduced number of formats)
-static uint8_t aecp_response_read_descriptor_stream_output[] = {
+// Template read stream_output descriptor response (reduced number of formats)
+static uint8_t frame_template_aecp_response_read_descriptor_stream_output[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0xb2, // status: success (0x00), control_data_length: 178
@@ -394,8 +421,8 @@ static uint8_t aecp_response_read_descriptor_stream_output[] = {
     0x00,0x40,0xc0,0x00 // 3rd stream format: channels_per_frame: 1, samples_per_frame: 12
 }; // 190 bytes
 
-// Test read avb_interface descriptor response
-static uint8_t aecp_response_read_descriptor_avb_interface[] = {
+// Template read avb_interface descriptor response
+static uint8_t frame_template_aecp_response_read_descriptor_avb_interface[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x76, // status: success (0x00), control data length: 118
@@ -425,8 +452,8 @@ static uint8_t aecp_response_read_descriptor_avb_interface[] = {
     0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00 // padding
 }; // 130 bytes
 
-// Test read clock_source descriptor response (3 are sent out by Apple)
-static uint8_t aecp_response_read_descriptor_clock_source[] = {
+// Template read clock_source descriptor response (3 are sent out by Apple)
+static uint8_t frame_template_aecp_response_read_descriptor_clock_source[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x66, // status: success (0x00), control data length: 102
@@ -450,8 +477,8 @@ static uint8_t aecp_response_read_descriptor_clock_source[] = {
     0x00,0x00 // clock source location ID: 0
 }; // 114 bytes
 
-// Test read clock_domain descriptor response
-static uint8_t aecp_response_read_descriptor_clock_domain[] = {
+// Template read clock_domain descriptor response
+static uint8_t frame_template_aecp_response_read_descriptor_clock_domain[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x62, // status: success (0x00), control data length: 98
@@ -476,8 +503,8 @@ static uint8_t aecp_response_read_descriptor_clock_domain[] = {
     0x00,0x02 // clock sources array item: 2
 }; // 110 bytes
 
-// Test read timing descriptor response
-static uint8_t aecp_response_read_descriptor_timing[] = {
+// Template read timing descriptor response
+static uint8_t frame_template_aecp_response_read_descriptor_timing[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x5e, // status: success (0x00), control data length: 94
@@ -500,8 +527,8 @@ static uint8_t aecp_response_read_descriptor_timing[] = {
     0x00,0x00 // 1st ptp_instance index: 0
 }; // 106 bytes
 
-// Test read ptp_instance descriptor response
-static uint8_t aecp_response_read_descriptor_ptp_instance[] = {
+// Template read ptp_instance descriptor response
+static uint8_t frame_template_aecp_response_read_descriptor_ptp_instance[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x6a, // status: success (0x00), control data length: 106
@@ -526,8 +553,8 @@ static uint8_t aecp_response_read_descriptor_ptp_instance[] = {
     0x00,0x00 // base ptp port (index of first ptp_port descriptor)
 }; // 118 bytes
 
-// Test set clock source unsolicited controller request
-static uint8_t aecp_response_set_clock_source[] = {
+// Template set clock source unsolicited controller request
+static uint8_t frame_template_aecp_response_set_clock_source[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x14, // status: success (0x00), control data length: 20
@@ -543,8 +570,8 @@ static uint8_t aecp_response_set_clock_source[] = {
     0x00,0x00,0x00,0x00,0x00,0x00 // padding
 }; // 46 bytes
 
-// Test register unsolicited notification command
-static uint8_t aecp_command_register_unsol_notification[] = {
+// Template register unsolicited notification command
+static uint8_t frame_template_aecp_command_register_unsol_notification[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x00, // stream id valid: false, avtp version: 0x0, message type: aem_command (0)
     0x00,0x10, // status: success (0x00), control data length: 16
@@ -557,8 +584,8 @@ static uint8_t aecp_command_register_unsol_notification[] = {
     0x00,0x00,0x00,0x00,0x00,0x00 // padding
 }; // 46 bytes
 
-// Test register unsolicited notification response
-static uint8_t aecp_response_register_unsol_notification[] = {
+// Template register unsolicited notification response
+static uint8_t frame_template_aecp_response_register_unsol_notification[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     0x00,0x22, // status: success (0x00), control data length: 34
@@ -571,15 +598,15 @@ static uint8_t aecp_response_register_unsol_notification[] = {
     0x00,0x00,0x00,0x00,0x00,0x00 // padding
 }; // 46 bytes
 
-// Test deregister unsolicited notification command
-static uint8_t aecp_command_deregister_unsol_notification[] = {
+// Template deregister unsolicited notification command
+static uint8_t frame_template_aecp_command_deregister_unsol_notification[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x00, // stream id valid: false, avtp version: 0x0, message type: aem_command (0)
     // TBD
 }; // 46 bytes
 
-// Test deregister unsolicited notification response
-static uint8_t aecp_response_deregister_unsol_notification[] = {
+// Template deregister unsolicited notification response
+static uint8_t frame_template_aecp_response_deregister_unsol_notification[] = {
     0xfb, // avtp subtype: atdecc enum and control (0xfb)
     0x01, // stream id valid: false, avtp version: 0x0, message type: aem_response (1)
     // TBD
@@ -589,8 +616,8 @@ static uint8_t aecp_response_deregister_unsol_notification[] = {
 // ATDECC connection management messages
 ////////////
 
-// Test connect tx command
-static uint8_t acmp_connect_tx_command[] = {
+// Template connect tx command
+static uint8_t frame_template_acmp_connect_tx_command[] = {
     0xfc, // avtp subtype: atdecc connection management (0xfc)
     0x00, // stream id valid: false, avtp version: 0x0, message type: connect_tx_command (0)
     0x00,0x2c, // status: success (0x00), control data length: 44
@@ -608,8 +635,8 @@ static uint8_t acmp_connect_tx_command[] = {
     0x00,0x00 // connected_listeners_entries: 0
 }; // 56 bytes
 
-// Test connect tx response
-static uint8_t acmp_connect_tx_response[] = {
+// Template connect tx response
+static uint8_t frame_template_acmp_connect_tx_response[] = {
     0xfc, // avtp subtype: atdecc connection management (0xfc)
     0x01, // stream id valid: false, avtp version: 0x0, message type: connect_tx_response (1)
     0x00,0x2c, // status: success (0x00), control data length: 44
@@ -627,8 +654,20 @@ static uint8_t acmp_connect_tx_response[] = {
     0x00,0x00 // connected_listeners_entries: 0
 }; // 56 bytes
 
-// Test connect rx command
-static uint8_t acmp_connect_rx_command[] = {
+// Template disconnect tx command
+static uint8_t frame_template_acmp_disconnect_tx_command[] = {};
+
+// Template disconnect tx response
+static uint8_t frame_template_acmp_disconnect_tx_response[] = {};
+
+// Template get tx state command
+static uint8_t frame_template_acmp_get_tx_state_command[] = {};
+
+// Template get tx state response
+static uint8_t frame_template_acmp_get_tx_state_response[] = {};
+
+// Template connect rx command
+static uint8_t frame_template_acmp_connect_rx_command[] = {
     0xfc, // avtp subtype: atdecc connection management (0xfc)
     0x06, // stream id valid: false, avtp version: 0x0, message type: connect_rx_command (6)
     0x00,0x2c, // status: success (0x00), control data length: 44
@@ -646,8 +685,8 @@ static uint8_t acmp_connect_rx_command[] = {
     0x00,0x00 // connected_listeners_entries: 0
 }; // 56 bytes
 
-// Test connect rx response
-static uint8_t acmp_connect_rx_response[] = {
+// Template connect rx response
+static uint8_t frame_template_acmp_connect_rx_response[] = {
     0xfc, // avtp subtype: atdecc connection management (0xfc)
     0x07, // stream id valid: false, avtp version: 0x0, message type: connect_rx_response (7)
     00,0x2c, // status: success (0x00), control data length: 44
@@ -665,15 +704,166 @@ static uint8_t acmp_connect_rx_response[] = {
     0x00,0x00 // connected_listeners_entries: 0
 }; // 56 bytes
 
-// Append adpdu to a frame based on message type and set payload_size
+// Template disconnect rx command
+static uint8_t frame_template_acmp_disconnect_rx_command[] = {};
+
+// Template disconnect rx response
+static uint8_t frame_template_acmp_disconnect_rx_response[] = {};
+
+// Template get rx state command
+static uint8_t frame_template_acmp_get_rx_state_command[] = {};
+
+// Template get rx state response
+static uint8_t frame_template_acmp_get_rx_state_response[] = {};
+
+// Append adpdu to a frame based on message type and set the payload_size
 void append_adpdu(adp_message_type_t type, eth_frame_t *frame) {
     switch (type) {
-        case entity_available:
-            memcpy(frame->payload, adp_entity_available, sizeof(adp_entity_available));
-            frame->payload_size = sizeof(adp_entity_available);
+        case adp_message_type_entity_available:
+            memcpy(frame->payload, frame_template_adp_entity_available, sizeof(frame_template_adp_entity_available));
+            frame->payload_size = sizeof(frame_template_adp_entity_available);
+            break;
+        case adp_message_type_entity_departing:
+            memcpy(frame->payload, frame_template_adp_entity_departing, sizeof(frame_template_adp_entity_departing));
+            frame->payload_size = sizeof(frame_template_adp_entity_departing);
+            break;
+        case adp_message_type_entity_discover:
+            memcpy(frame->payload, frame_template_adp_entity_discover, sizeof(frame_template_adp_entity_discover));
+            frame->payload_size = sizeof(frame_template_adp_entity_discover);
             break;
         default:
-            ESP_LOGE(TAG, "Can't create ADPDU, message type (%d) not supported yet.", type);
+            ESP_LOGE(TAG, "Can't create ADPDU, with uknown message type: 0x%x", type);
+    }
+}
+
+// Append aecpdu to a frame based on message type and set the payload_size
+void append_aecpdu(aecp_message_type_t type, eth_frame_t *frame) {
+    static uint8_t *frame_template;
+    static ssize_t frame_size = 0;
+    static uint16_t command_code;
+    memcpy(&command_code, frame->payload + 21, (2)); // 14 bits but left 2 bits are likely 0
+    command_code = ntohs(command_code); // flip endianness
+    switch (type) {
+        case aecp_message_type_aem_command:
+            switch (command_code) {
+                case aecp_command_code_acquire_entity:
+                    frame_template = frame_template_aecp_command_acquire_entity;
+                    frame_size = sizeof(frame_template_aecp_command_acquire_entity);
+                    break;
+                case aecp_command_code_lock_entity:
+                    frame_template = frame_template_aecp_command_lock_entity;
+                    frame_size = sizeof(frame_template_aecp_command_lock_entity);
+                    break;
+                case aecp_command_code_entity_available:
+                    frame_template = frame_template_aecp_command_entity_available;
+                    frame_size = sizeof(frame_template_aecp_command_entity_available);
+                    break;
+                case aecp_command_code_controller_available:
+                    frame_template = frame_template_aecp_command_controller_available;
+                    frame_size = sizeof(frame_template_aecp_command_controller_available);
+                    break;
+                case aecp_command_code_read_descriptor:
+                    frame_template = frame_template_aecp_command_read_descriptor_entity;
+                    frame_size = sizeof(frame_template_aecp_command_read_descriptor_entity);
+                    break;
+                default:
+                    ESP_LOGE(TAG, "Can't create AECP command, with unknown command code: 0x%x", command_code);
+            }
+            break;
+        case aecp_message_type_aem_response:
+            switch(command_code) {
+                case aecp_command_code_acquire_entity:
+                    frame_template = frame_template_aecp_response_acquire_entity;
+                    frame_size = sizeof(frame_template_aecp_response_acquire_entity);
+                    break;
+                case aecp_command_code_lock_entity:
+                    frame_template = frame_template_aecp_response_lock_entity;
+                    frame_size = sizeof(frame_template_aecp_response_lock_entity);
+                    break;
+                case aecp_command_code_entity_available:
+                    frame_template = frame_template_aecp_response_entity_available;
+                    frame_size = sizeof(frame_template_aecp_response_entity_available);
+                    break;
+                case aecp_command_code_controller_available:
+                    frame_template = frame_template_aecp_response_controller_available;
+                    frame_size = sizeof(frame_template_aecp_response_controller_available);
+                    break;
+                case aecp_command_code_read_descriptor:
+                    frame_template = frame_template_aecp_response_read_descriptor_entity;
+                    frame_size = sizeof(frame_template_aecp_response_read_descriptor_entity);
+                    break;
+                default:
+                    ESP_LOGE(TAG, "Can't create AECP response, with unknown command code: 0x%x", command_code);
+            }
+            break;
+        default:
+            ESP_LOGE(TAG, "Can't create AECPDU, with unknown message type: 0x%x", type);
+    }
+    if (frame_size > 0) {
+        memcpy(frame->payload, frame_template, frame_size);
+        frame->payload_size = frame_size;
+    }
+}
+
+// Append acmpdu to a frame based on message type and set the payload_size
+void append_acmpdu(acmp_message_type_t type, eth_frame_t *frame) {
+    static uint8_t *frame_template = {};
+    static ssize_t frame_size = 0;
+    switch (type) {
+        case acmp_message_type_connect_tx_command:
+            frame_template = frame_template_acmp_connect_tx_command;
+            frame_size = sizeof(frame_template_acmp_connect_tx_command);
+            break;
+        case acmp_message_type_connect_tx_response:
+            frame_template = frame_template_acmp_connect_tx_response;
+            frame_size = sizeof(frame_template_acmp_connect_tx_response);
+            break;
+        case acmp_message_type_disconnect_tx_command:
+            frame_template = frame_template_acmp_disconnect_tx_command;
+            frame_size = sizeof(frame_template_acmp_disconnect_tx_command);
+            break;
+        case acmp_message_type_disconnect_tx_response:
+            frame_template = frame_template_acmp_disconnect_tx_response;
+            frame_size = sizeof(frame_template_acmp_disconnect_tx_response);
+            break;
+	    case acmp_message_type_get_tx_state_command:
+            frame_template = frame_template_acmp_get_tx_state_command;
+            frame_size = sizeof(frame_template_acmp_get_tx_state_command);
+            break;
+	    case acmp_message_type_get_tx_state_response:
+            frame_template = frame_template_acmp_get_tx_state_response;
+            frame_size = sizeof(frame_template_acmp_get_tx_state_response);
+            break;
+	    case acmp_message_type_connect_rx_command:
+            frame_template = frame_template_acmp_connect_rx_command;
+            frame_size = sizeof(frame_template_acmp_connect_rx_command);
+            break;
+        case acmp_message_type_connect_rx_response:
+            frame_template = frame_template_acmp_connect_rx_response;
+            frame_size = sizeof(frame_template_acmp_connect_rx_response);
+            break;
+        case acmp_message_type_disconnect_rx_command:
+            frame_template = frame_template_acmp_disconnect_rx_command;
+            frame_size = sizeof(frame_template_acmp_disconnect_rx_command);
+            break;
+	    case acmp_message_type_disconnect_rx_response:
+            frame_template = frame_template_acmp_disconnect_rx_response;
+            frame_size = sizeof(frame_template_acmp_disconnect_rx_response);
+            break;
+	    case acmp_message_type_get_rx_state_command:
+            frame_template = frame_template_acmp_get_rx_state_command;
+            frame_size = sizeof(frame_template_acmp_get_rx_state_command);
+            break;
+	    case acmp_message_type_get_rx_state_response:
+            frame_template = frame_template_acmp_get_rx_state_response;
+            frame_size = sizeof(frame_template_acmp_get_rx_state_response);
+            break;
+        default:
+            ESP_LOGE(TAG, "Can't create ACMPDU, with uknown message type: 0x%x", type);
+    }
+    if (frame_size > 0) {
+        memcpy(frame->payload, frame_template, frame_size);
+        frame->payload_size = frame_size;
     }
 }
 
@@ -681,131 +871,258 @@ void append_adpdu(adp_message_type_t type, eth_frame_t *frame) {
 avb_frame_type_t detect_atdecc_frame_type(eth_frame_t *frame, ssize_t size) {
     avb_frame_type_t frame_type = avb_frame_unknown;
     if (size <= ETH_HEADER_LEN) {
-        ESP_LOGI(TAG, "Can't detect frame, too small.");
+        ESP_LOGI(TAG, "Can't detect frame, too small: %d bytes", size);
     }
     else {
         uint8_t subtype;
-        memcpy(&subtype, &frame->payload, (1));
+        uint8_t message_type;
+        memcpy(&subtype, frame->payload, (1));
+        memcpy(&message_type, frame->payload + 1, (1)); // 4 bits
+        message_type = message_type & 0x0f; // mask out the left 4 bits
         switch(subtype) {
             case avtp_subtype_adp:
-                frame_type = avb_frame_adp; // all adp frames have same format
+                switch (message_type) {
+                    case adp_message_type_entity_available:
+                        frame_type = avb_frame_adp_entity_available;
+                        break;
+                    case adp_message_type_entity_departing:
+                        frame_type = avb_frame_adp_entity_departing;
+                        break;
+                    case adp_message_type_entity_discover:
+                        frame_type = avb_frame_adp_entity_discover;
+                        break;
+                    default:
+                        ESP_LOGI(TAG, "Can't detect ADP frame with unknown message type: 0x%x", message_type);
+                }
                 break;
             case avtp_subtype_aecp:
-                uint8_t message_type;
-                uint16_t command_type;
-                memcpy(&message_type, &frame->payload + 1, (1)); // 4 bits
-                message_type = message_type & 0x0f; // mask out the left 4 bits
-                memcpy(&command_type, &frame->payload + 21, (2)); // 14 bits but left 2 bits are likely 0
-                command_type = ntohs(command_type); // flip endianness
+                uint16_t command_code;
+                memcpy(&command_code, frame->payload + 21, (2)); // 14 bits but left 2 bits are likely 0
+                command_code = ntohs(command_code); // flip endianness
                 switch (message_type) {
-                    case aem_command:
-                        switch (command_type) {
-                            case aecp_command_acquire_entity:
-                                frame_type = avb_frame_aecp_acquire_entity;
+                    case aecp_message_type_aem_command:
+                        switch (command_code) {
+                            case aecp_command_code_acquire_entity:
+                                frame_type = avb_frame_aecp_command_acquire_entity;
                                 break;
-                            case aecp_command_lock_entity:
-                                frame_type = avb_frame_aecp_lock_entity;
+                            case aecp_command_code_lock_entity:
+                                frame_type = avb_frame_aecp_command_lock_entity;
                                 break;
-                            case aecp_command_entity_available:
+                            case aecp_command_code_entity_available:
                                 frame_type = avb_frame_aecp_command_entity_available;
                                 break;
-                            case aecp_command_controller_available:
-                                frame_type = avb_frame_aecp_controller_available;
+                            case aecp_command_code_controller_available:
+                                frame_type = avb_frame_aecp_command_controller_available;
                                 break;
-                            case aecp_command_read_descriptor:
+                            case aecp_command_code_read_descriptor:
                                 frame_type = avb_frame_aecp_command_read_descriptor;
                                 break;
                             default:
-                                ESP_LOGI(TAG, "Can't detect aecp command frame with unknown command type: %d", command_type);
+                                ESP_LOGI(TAG, "Can't detect aecp command frame with unknown command type: 0x%x", command_code);
                         }
                         break;
-                    case aem_response:
-                        switch (command_type) {
-                            case aecp_command_acquire_entity:
-                                frame_type = avb_frame_aecp_acquire_entity;
+                    case aecp_message_type_aem_response:
+                        switch (command_code) {
+                            case aecp_command_code_acquire_entity:
+                                frame_type = avb_frame_aecp_response_acquire_entity;
                                 break;
-                            case aecp_command_lock_entity:
-                                frame_type = avb_frame_aecp_lock_entity;
+                            case aecp_command_code_lock_entity:
+                                frame_type = avb_frame_aecp_response_lock_entity;
                                 break;
-                            case aecp_command_entity_available:
+                            case aecp_command_code_entity_available:
                                 frame_type = avb_frame_aecp_response_entity_available;
                                 break;
-                            case aecp_command_controller_available:
-                                frame_type = avb_frame_aecp_controller_available;
+                            case aecp_command_code_controller_available:
+                                frame_type = avb_frame_aecp_response_controller_available;
                                 break;
-                            case aecp_command_read_descriptor:
+                            case aecp_command_code_read_descriptor:
                                 frame_type = avb_frame_aecp_response_read_entity;
                                 break;
                             default:
-                                ESP_LOGI(TAG, "Can't detect aecp response frame with unknown command type: %d", command_type);
+                                ESP_LOGI(TAG, "Can't detect aecp response frame with unknown command type: 0x%x", command_code);
                         }
                         break;
                     default:
-                        ESP_LOGI(TAG, "Can't detect aecp frame with unknown message type: %d", message_type);
+                        ESP_LOGI(TAG, "Can't detect aecp frame with unknown message type: 0x%x", message_type);
                 }
                 break;
             case avtp_subtype_acmp:
-                frame_type = avb_frame_acmp;
+                switch (message_type) {
+                    case acmp_message_type_connect_tx_command:
+                        frame_type = avb_frame_acmp_connect_tx_command;
+                        break;
+                    case acmp_message_type_connect_tx_response:
+                        frame_type = avb_frame_acmp_connect_tx_response;
+                        break;
+                    case acmp_message_type_disconnect_tx_command:
+                        frame_type = avb_frame_acmp_disconnect_tx_command;
+                        break;
+                    case acmp_message_type_disconnect_tx_response:
+                        frame_type = avb_frame_acmp_disconnect_tx_response;
+                        break;
+                    case acmp_message_type_get_tx_state_command:
+                        frame_type = avb_frame_acmp_get_tx_state_command;
+                        break;
+                    case acmp_message_type_get_tx_state_response:
+                        frame_type = avb_frame_acmp_get_tx_state_response;
+                        break;
+                    case acmp_message_type_connect_rx_command:
+                        frame_type = avb_frame_acmp_connect_rx_command;
+                        break;
+                    case acmp_message_type_connect_rx_response:
+                        frame_type = avb_frame_acmp_connect_rx_response;
+                        break;
+                    case acmp_message_type_disconnect_rx_command:
+                        frame_type = avb_frame_acmp_disconnect_rx_command;
+                        break;
+                    case acmp_message_type_disconnect_rx_response:
+                        frame_type = avb_frame_acmp_disconnect_rx_response;
+                        break;
+                    case acmp_message_type_get_rx_state_command:
+                        frame_type = avb_frame_acmp_get_rx_state_command;
+                        break;
+                    case acmp_message_type_get_rx_state_response:
+                        frame_type = avb_frame_acmp_get_rx_state_response;
+                        break;
+                    default:
+                        ESP_LOGI(TAG, "Can't detect ACMP frame with unknown message type: 0x%x", message_type);
+                }
                 break;
             default:
-                ESP_LOGI(TAG, "Can't detect avtp frame with unknown subtype: %d", subtype);
+                ESP_LOGI(TAG, "Can't detect AVTP frame with unknown subtype: 0x%x", subtype);
         }
     }
     return frame_type;
 }
 
 // Print out the frame details
-void print_atdecc_frame(avb_frame_type_t type, eth_frame_t *frame, ssize_t size) {
-
-    if (size <= ETH_HEADER_LEN) {
-        ESP_LOGI(TAG, "Can't print frame, too small.");
+void print_atdecc_frame(avb_frame_type_t type, eth_frame_t *frame, int format) {
+    
+    ssize_t size = frame->payload_size + ETH_HEADER_LEN;
+    if (frame->payload_size < 2) {
+        ESP_LOGE(TAG, "Can't print frame, payload is too small: %d", frame->payload_size);
     }
     else {
-        ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);
-                ESP_LOG_BUFFER_HEX("           destination", &frame->header.dest, (6));
-                ESP_LOG_BUFFER_HEX("                source", &frame->header.src, (6));
-                ESP_LOG_BUFFER_HEX("             etherType", &frame->header.type, (2));
-        switch (type) {
-            case avb_frame_adp:
-                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
-                ESP_LOG_BUFFER_HEX(" streamValidVerMsgType", frame->payload + 1, (1));
-                ESP_LOG_BUFFER_HEX("  validTimeCtrlDataLen", frame->payload + 2, (2));
-                ESP_LOG_BUFFER_HEX("              entityID", frame->payload + 4, (8));
-                ESP_LOG_BUFFER_HEX("         entityModelID", frame->payload + 12, (8));
-                ESP_LOG_BUFFER_HEX("    entityCapabilities", frame->payload + 20, (4));
-                ESP_LOG_BUFFER_HEX("   talkerStreamSources", frame->payload + 24, (2));
-                ESP_LOG_BUFFER_HEX("    talkerCapabilities", frame->payload + 26, (2));
-                ESP_LOG_BUFFER_HEX("   listenerStreamSinks", frame->payload + 28, (2));
-                ESP_LOG_BUFFER_HEX("  listenerCapabilities", frame->payload + 30, (2));
-                ESP_LOG_BUFFER_HEX("controllerCapabilities", frame->payload + 32, (4));
-                ESP_LOG_BUFFER_HEX("        availableIndex", frame->payload + 36, (4));
-                ESP_LOG_BUFFER_HEX("     gptpGrandmasterID", frame->payload + 40, (8));
-                ESP_LOG_BUFFER_HEX("      gptpDomainNumber", frame->payload + 48, (1));
-                ESP_LOG_BUFFER_HEX("         reserved8bits", frame->payload + 49, (1));
-                ESP_LOG_BUFFER_HEX("    currentConfigIndex", frame->payload + 50, (2));
-                ESP_LOG_BUFFER_HEX("  identifyControlIndex", frame->payload + 52, (2));
-                ESP_LOG_BUFFER_HEX("        interfaceIndex", frame->payload + 54, (2));
-                ESP_LOG_BUFFER_HEX("         associationID", frame->payload + 56, (8));
-                ESP_LOG_BUFFER_HEX("        reserved32bits", frame->payload + 64, (4));
-                break;
-            case avb_frame_aecp_command_read_descriptor:
-                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
-                ESP_LOG_BUFFER_HEX("               payload", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
-                // Need to break out all fields
-                break;
-            case avb_frame_aecp_response_read_entity:
-                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
-                ESP_LOG_BUFFER_HEX("               payload", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
-                // Need to break out all fields
-                break;
-            case avb_frame_acmp:
-                ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
-                ESP_LOG_BUFFER_HEX("               payload", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
-                // Need to break out all fields
-                break;
-            default:
-                ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+        if (format == 0) { // short
+            ESP_LOGI(TAG, "%s from %s", get_frame_type_name(type), mac_address_to_string(frame->header.src.addr));
         }
-        ESP_LOGI(TAG, "*** End of Frame ***");
+        else {
+            ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);
+                    ESP_LOG_BUFFER_HEX("           destination", &frame->header.dest, (6));
+                    ESP_LOG_BUFFER_HEX("                source", &frame->header.src, (6));
+                    ESP_LOG_BUFFER_HEX("             etherType", &frame->header.type, (2));
+            switch (type) {
+                // all adp message types use the same format
+                case avb_frame_adp_entity_available ... avb_frame_adp_entity_discover:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX(" streamValidVerMsgType", frame->payload + 1, (1));
+                    ESP_LOG_BUFFER_HEX("  validTimeCtrlDataLen", frame->payload + 2, (2));
+                    ESP_LOG_BUFFER_HEX("              entityID", frame->payload + 4, (8));
+                    ESP_LOG_BUFFER_HEX("         entityModelID", frame->payload + 12, (8));
+                    ESP_LOG_BUFFER_HEX("    entityCapabilities", frame->payload + 20, (4));
+                    ESP_LOG_BUFFER_HEX("   talkerStreamSources", frame->payload + 24, (2));
+                    ESP_LOG_BUFFER_HEX("    talkerCapabilities", frame->payload + 26, (2));
+                    ESP_LOG_BUFFER_HEX("   listenerStreamSinks", frame->payload + 28, (2));
+                    ESP_LOG_BUFFER_HEX("  listenerCapabilities", frame->payload + 30, (2));
+                    ESP_LOG_BUFFER_HEX("controllerCapabilities", frame->payload + 32, (4));
+                    ESP_LOG_BUFFER_HEX("        availableIndex", frame->payload + 36, (4));
+                    ESP_LOG_BUFFER_HEX("     gptpGrandmasterID", frame->payload + 40, (8));
+                    ESP_LOG_BUFFER_HEX("      gptpDomainNumber", frame->payload + 48, (1));
+                    ESP_LOG_BUFFER_HEX("         reserved8bits", frame->payload + 49, (1));
+                    ESP_LOG_BUFFER_HEX("    currentConfigIndex", frame->payload + 50, (2));
+                    ESP_LOG_BUFFER_HEX("  identifyControlIndex", frame->payload + 52, (2));
+                    ESP_LOG_BUFFER_HEX("        interfaceIndex", frame->payload + 54, (2));
+                    ESP_LOG_BUFFER_HEX("         associationID", frame->payload + 56, (8));
+                    ESP_LOG_BUFFER_HEX("        reserved32bits", frame->payload + 64, (4));
+                    break;
+                case avb_frame_aecp_command_acquire_entity ... avb_frame_aecp_response_acquire_entity:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                case avb_frame_aecp_command_lock_entity ... avb_frame_aecp_response_lock_entity:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                case avb_frame_aecp_command_entity_available:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                case avb_frame_aecp_response_entity_available:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                case avb_frame_aecp_command_controller_available ... avb_frame_aecp_response_controller_available:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                case avb_frame_aecp_command_read_descriptor:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                case avb_frame_aecp_response_read_entity:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                case avb_frame_acmp_connect_tx_command ... avb_frame_acmp_get_rx_state_response:
+                    ESP_LOG_BUFFER_HEX("               subType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("             remainder", frame->payload + 1, (size - ETH_HEADER_LEN - 1));
+                    // Need to break out all fields
+                    break;
+                default:
+                    ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+            }
+            ESP_LOGI(TAG, "*** End of Frame ***");  
+        }
+    }
+}
+
+// Get the name of the ADP message type
+const char* get_adp_message_type_name(adp_message_type_t message_type) 
+{
+    switch (message_type) {
+        case adp_message_type_entity_available: return "ADP Entity Available";
+        case adp_message_type_entity_departing: return "ADP Entity Departing";
+        case adp_message_type_entity_discover: return "ADP Entity Discover";
+        default: return "Unknown";
+    }
+}
+
+// Get the name of the AECP command code
+const char* get_aecp_command_code_name(aecp_command_code_t command_code) 
+{
+    switch (command_code) {
+        case aecp_command_code_acquire_entity: return "AECP Acquire Entity";
+        case aecp_command_code_lock_entity: return "AECP Lock Entity";
+        case aecp_command_code_entity_available: return "AECP Entity Available";
+        case aecp_command_code_controller_available: return "AECP Controller Available";
+        case aecp_command_code_read_descriptor: return "AECP Read Descriptor";
+        default: return "Unknown";
+    }
+}
+
+// Get the name of the ACMP message type
+const char* get_acmp_message_type_name(acmp_message_type_t message_type) 
+{
+    switch (message_type) {
+        case acmp_message_type_connect_tx_command: return "ACMP Connect TX Command";
+        case acmp_message_type_connect_tx_response: return "ACMP Connect TX Response";
+        case acmp_message_type_disconnect_tx_command: return "ACMP Disconnect TX Command";
+        case acmp_message_type_disconnect_tx_response: return "ACMP Disconnect TX Response";
+        case acmp_message_type_get_tx_state_command: return "ACMP Get TX State Command";
+        case acmp_message_type_get_tx_state_response: return "ACMP Get TX State Response";
+        case acmp_message_type_connect_rx_command: return "ACMP Connect RX Command";
+        case acmp_message_type_connect_rx_response: return "ACMP Connect RX Response";
+        case acmp_message_type_disconnect_rx_command: return "ACMP Disconnect RX Command";
+        case acmp_message_type_disconnect_rx_response: return "ACMP Disconnect RX Response";
+        case acmp_message_type_get_rx_state_command: return "ACMP Get RX State Command";
+        case acmp_message_type_get_rx_state_response: return "ACMP Get RX State Response";
+        default: return "Unknown";
     }
 }

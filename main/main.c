@@ -26,14 +26,14 @@
 #define TIMER_DIVIDER   (16)  //  Hardware timer clock divider
 #define TIMER_SCALE     (TIMER_BASE_CLK / TIMER_DIVIDER)  // convert counter value to seconds
 
+// Ethernet driver handle
+static esp_eth_handle_t eth_handle = NULL;
+
 // Define logging tag
 static const char *TAG = "MAIN";
 
 // Global flag for IP status
 static bool ip_obtained = false;  
-
-// Ethernet driver handle
-static esp_eth_handle_t eth_handle = NULL;
 
 // Setup DNS config
 static esp_err_t set_dns_config(esp_netif_t *netif, uint32_t addr, esp_netif_dns_type_t type)
@@ -115,8 +115,7 @@ static void eth_event_handler(void* arg, esp_event_base_t event_base, int32_t ev
         esp_netif_t *eth_netif = (esp_netif_t *)arg;
 
         // Start AVB talker (doesn't use IP)
-        esp_netif_iodriver_handle handle = esp_netif_get_io_driver(eth_netif);
-        start_talker(handle);
+        start_talker(eth_handle);
 
         // Start DHCP
         esp_netif_ip_info_t ip_info;
@@ -135,6 +134,8 @@ static void eth_event_handler(void* arg, esp_event_base_t event_base, int32_t ev
         }
     } else if (event_id == ETHERNET_EVENT_DISCONNECTED) {
         ESP_LOGI(TAG, "Ethernet Link Down");
+        // Stop AVB talker
+        stop_talker();
     } else if (event_id == ETHERNET_EVENT_START) {
         ESP_LOGI(TAG, "Ethernet Started");
     } else if (event_id == ETHERNET_EVENT_STOP) {
@@ -212,36 +213,44 @@ static esp_netif_t* init_ethernet()
     // Start the Ethernet driver
     ESP_ERROR_CHECK(esp_eth_start(eth_handle));
 
+    // Initialize L2 TAP VFS interface
+    ESP_ERROR_CHECK(esp_vfs_l2tap_intf_register(NULL));
+
     return eth_netif;
 }
 
 void app_main()
 {
-    // Initialize L2 TAP VFS interface
-    //ESP_ERROR_CHECK(esp_vfs_l2tap_intf_register(NULL));
-
     // Initialize NVS (non-volatile storage)
     ESP_ERROR_CHECK(nvs_flash_init());
     
     // Initialize Ethernet and establish a connection
     init_ethernet();
 
-    // Check memory consumption of tasks
-    char h1_name[] = "watch_gptp"; // usually under 16 chars
-    //char h2_name[] = "watch_avtp";
-    //char h3_name[] = "watch_msrp";
-    //char h4_name[] = "watch_mvrp";
-    TaskHandle_t handy = xTaskGetHandle( "main_task" );
-    TaskHandle_t h1 = xTaskGetHandle( "watch_gptp" );
-    //TaskHandle_t h2 = xTaskGetHandle( h2_name );
-    //TaskHandle_t h3 = xTaskGetHandle( h3_name );
-    //TaskHandle_t h4 = xTaskGetHandle( h4_name );
+    // Check memory consumption of tasks periodically, report any tasks with high watermark under threshold
+    static const uint period = 10000; // wait between checks in ms
+    static const uint threshold = 1000; // size of high watermark
+    char t0_name[] = "main_task";  // usually under 16 chars
+    char t1_name[] = "watch_gptp"; // usually under 16 chars
+    char t2_name[] = "watch_avtp"; // usually under 16 chars
+    char t3_name[] = "watch_msrp"; // usually under 16 chars
+    char t4_name[] = "watch_mvrp"; // usually under 16 chars
+    TaskHandle_t t0 = xTaskGetHandle( t0_name );
+    TaskHandle_t t1 = xTaskGetHandle( t1_name );
+    TaskHandle_t t2 = xTaskGetHandle( t2_name );
+    TaskHandle_t t3 = xTaskGetHandle( t3_name );
+    TaskHandle_t t4 = xTaskGetHandle( t4_name );
     while(1) {
-        ESP_LOGI(TAG, "TASK %s high water mark = %d", "main_task", uxTaskGetStackHighWaterMark(handy));
-        ESP_LOGI(TAG, "TASK %s high water mark = %d", "watch_gptp", uxTaskGetStackHighWaterMark(h1));
-        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h2_name, uxTaskGetStackHighWaterMark(h2));
-        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h3_name, uxTaskGetStackHighWaterMark(h3));
-        //ESP_LOGI(TAG, "TASK %s high water mark = %d", h4_name, uxTaskGetStackHighWaterMark(h4));
-        vTaskDelay(pdMS_TO_TICKS(1500));
+        if (uxTaskGetStackHighWaterMark(t0) < threshold)
+            ESP_LOGI(TAG, "TASK %s high water mark = %d", t0_name, uxTaskGetStackHighWaterMark(t0));
+        if (uxTaskGetStackHighWaterMark(t1) < threshold)
+            ESP_LOGI(TAG, "TASK %s high water mark = %d", t1_name, uxTaskGetStackHighWaterMark(t1));
+        if (uxTaskGetStackHighWaterMark(t2) < threshold)
+            ESP_LOGI(TAG, "TASK %s high water mark = %d", t2_name, uxTaskGetStackHighWaterMark(t2));
+        if (uxTaskGetStackHighWaterMark(t3) < threshold)
+            ESP_LOGI(TAG, "TASK %s high water mark = %d", t3_name, uxTaskGetStackHighWaterMark(t3));
+        if (uxTaskGetStackHighWaterMark(t4) < threshold)
+            ESP_LOGI(TAG, "TASK %s high water mark = %d", t4_name, uxTaskGetStackHighWaterMark(t4));
+        vTaskDelay(pdMS_TO_TICKS(period));
     }
 }

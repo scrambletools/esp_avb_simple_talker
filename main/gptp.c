@@ -7,8 +7,8 @@ static const char *TAG = "GPTP";
 // gPTP messages
 ////////////
 
-// Test gptp announce
-static uint8_t gptp_announce[] = {
+// Template gptp announce
+static uint8_t frame_template_gptp_announce[] = {
     0x1b, // majorSdoId: gPTP domain (0x1), messageType: announce message (0xb)
     0x02, // minorVersionPTP: 0, versionPTP: 2
     0x00,0x4c, // messageLength: 76
@@ -39,8 +39,8 @@ static uint8_t gptp_announce[] = {
     0x00,0x01,0xf2,0xff,0xfe,0x22,0x3b,0x14, // path trace tlv: pathSequence
 }; // 76 bytes
 
-// Test gptp sync
-static uint8_t gptp_sync[] = {
+// Template gptp sync
+static uint8_t frame_template_gptp_sync[] = {
     0x10, // majorSdoId: gPTP domain (0x1), messageType: sync message (0x0)
     0x02, // minorVersionPTP: 0, versionPTP: 2
     0x00,0x2c, // messageLength: 44
@@ -59,8 +59,8 @@ static uint8_t gptp_sync[] = {
     0x00,0x00 // padding (not counted in messageLength)
 }; // 44 bytes
 
-// Test gptp follow up
-static uint8_t gptp_follow_up[] = {
+// Template gptp follow up
+static uint8_t frame_template_gptp_follow_up[] = {
     0x18, // majorSdoId: gPTP domain (0x1), messageType: follow up message (0x8)
     0x02, // minorVersionPTP: 0, versionPTP: 2
     0x00,0x4c, // messageLength: 76
@@ -87,8 +87,8 @@ static uint8_t gptp_follow_up[] = {
     0x00,0x00,0x00,0x00 // followup information tlv: scaledLastGmFreqChange: 0
 }; // 76 bytes
 
-// Test gptp peer delay request
-static uint8_t gptp_pdelay_request[] = {
+// Template gptp peer delay request
+static uint8_t frame_template_gptp_pdelay_request[] = {
     0x12, // majorSdoId: gPTP domain (0x1), messageType: peer_delay_request message (0x2)
     0x02, // minorVersionPTP: 0, versionPTP: 2
     0x00,0x36, // messageLength: 54
@@ -107,8 +107,8 @@ static uint8_t gptp_pdelay_request[] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 // reserved
 }; // 54 bytes
 
-// Test gptp peer delay reponse
-static uint8_t gptp_pdelay_response[] = {
+// Template gptp peer delay reponse
+static uint8_t frame_template_gptp_pdelay_response[] = {
     0x13, // majorSdoId: gPTP domain (0x1), messageType: peer_delay_response message (0x3)
     0x02, // minorVersionPTP: 0, versionPTP: 2
     0x00,0x36, // messageLength: 54
@@ -129,8 +129,8 @@ static uint8_t gptp_pdelay_response[] = {
     0x00,0x01 // requestingSourcePortId: 1
 }; // 54 bytes
 
-// Test gptp peer delay response follow up
-static uint8_t gptp_pdelay_reponse_follow_up[] = {
+// Template gptp peer delay response follow up
+static uint8_t frame_template_gptp_pdelay_response_follow_up[] = {
     0x1a, // majorSdoId: gPTP domain (0x1), messageType: peer_delay_response_follow_up message (0xa)
     0x02, // minorVersionPTP: 0, versionPTP: 2
     0x00,0x36, // messageLength: 54
@@ -151,15 +151,50 @@ static uint8_t gptp_pdelay_reponse_follow_up[] = {
     0x00,0x01 // requestingSourcePortId: 1
 }; // 54 bytes
 
+// Append gptpdu to a frame based on frame type and set the payload_size
+// Prior to appending, overwrite template values with config data
+void append_gptpdu(avb_frame_type_t type, eth_frame_t *frame) {
+    switch (type) {
+        case avb_frame_gptp_announce:
+            memcpy(frame->payload, frame_template_gptp_announce, sizeof(frame_template_gptp_announce));
+            frame->payload_size = sizeof(frame_template_gptp_announce);
+            break;
+        case avb_frame_gptp_sync:
+            memcpy(frame->payload, frame_template_gptp_sync, sizeof(frame_template_gptp_sync));
+            frame->payload_size = sizeof(frame_template_gptp_sync);
+            break;
+        case avb_frame_gptp_follow_up:
+            memcpy(frame->payload, frame_template_gptp_follow_up, sizeof(frame_template_gptp_follow_up));
+            frame->payload_size = sizeof(frame_template_gptp_follow_up);
+            break;
+        case avb_frame_gptp_pdelay_request:
+            memcpy(frame->payload, frame_template_gptp_pdelay_request, sizeof(frame_template_gptp_pdelay_request));
+            frame->payload_size = sizeof(frame_template_gptp_pdelay_request);
+            break;
+        case avb_frame_gptp_pdelay_response:
+            memcpy(frame->payload, frame_template_gptp_pdelay_response, sizeof(frame_template_gptp_pdelay_response));
+            frame->payload_size = sizeof(frame_template_gptp_pdelay_response);
+            break;
+        case avb_frame_gptp_pdelay_response_follow_up:
+            memcpy(frame->payload, frame_template_gptp_pdelay_response_follow_up, sizeof(frame_template_gptp_pdelay_response_follow_up));
+            frame->payload_size = sizeof(frame_template_gptp_pdelay_response_follow_up);
+            break;
+        default:
+            ESP_LOGE(TAG, "Can't create %s, not supported yet.", get_frame_type_name(type));
+        // Overwrite general gPTP config values
+        memcpy(frame->payload + 20, CONFIG_CLOCK_ID, sizeof(CONFIG_CLOCK_ID)); // clock identity
+    }
+}
+
 // Detect which kind of gPTP frame it is; assumes Ethertype is PTP
 avb_frame_type_t detect_gptp_frame_type(eth_frame_t *frame, ssize_t size) {
     avb_frame_type_t frame_type = avb_frame_unknown;
     if (size <= ETH_HEADER_LEN) {
-        ESP_LOGI(TAG, "Can't detect frame, too small.");
+        ESP_LOGI(TAG, "Can't detect frame, too small: %d bytes", size);
     }
     else {
         uint8_t message_type;
-        memcpy(&message_type, &frame->payload, (1)); // 4 bits
+        memcpy(&message_type, frame->payload, (1)); // 4 bits
         message_type = message_type & 0x0f; // mask out the left 4 bits
         switch(message_type) {
             case gptp_message_type_announce:
@@ -177,95 +212,98 @@ avb_frame_type_t detect_gptp_frame_type(eth_frame_t *frame, ssize_t size) {
             case gptp_message_type_pdelay_response:
                 frame_type = avb_frame_gptp_pdelay_response;
                 break;
-            case gptp_message_type_pdelay_follow_up:
-                frame_type = avb_frame_gptp_pdelay_follow_up;
+            case gptp_message_type_pdelay_response_follow_up:
+                frame_type = avb_frame_gptp_pdelay_response_follow_up;
                 break;
             default:
-                ESP_LOGI(TAG, "Can't detect gPTP frame with unknown message type: %d", message_type);
+                ESP_LOGI(TAG, "Can't detect gPTP frame with unknown message type: 0x%x", message_type);
         }
     }
     return frame_type;
 }
 
-
-
 // Print out the frame details
-void print_gptp_frame(avb_frame_type_t type, eth_frame_t *frame, ssize_t size) {
-
-    //static const int MINSIZE = 14; // 46
-    if (size <= ETH_HEADER_LEN) {
-        ESP_LOGI(TAG, "Can't print frame, too small.");
+void print_gptp_frame(avb_frame_type_t type, eth_frame_t *frame, int format) {
+    
+    ssize_t size = frame->payload_size + ETH_HEADER_LEN;
+    if (frame->payload_size < 2) {
+        ESP_LOGE(TAG, "Can't print frame, payload is too small: %d", frame->payload_size);
     }
     else {
-        ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);
-                ESP_LOG_BUFFER_HEX("                        destination", &frame->header.dest, (6));
-                ESP_LOG_BUFFER_HEX("                             source", &frame->header.src, (6));
-                ESP_LOG_BUFFER_HEX("                          etherType", &frame->header.type, (2));
-                ESP_LOG_BUFFER_HEX("             majorSdoId,messageType", frame->payload, (1));
-                ESP_LOG_BUFFER_HEX("         minorVersionPtp,versionPtp", frame->payload + 1, (1));
-                ESP_LOG_BUFFER_HEX("                      messageLength", frame->payload + 2, (2));
-                ESP_LOG_BUFFER_HEX("                       domainNumber", frame->payload + 4, (1));
-                ESP_LOG_BUFFER_HEX("                         minorSdoId", frame->payload + 5, (1));
-                ESP_LOG_BUFFER_HEX("flags,ptpTimescale,ptpUtcReasonable", frame->payload + 6, (2));
-                ESP_LOG_BUFFER_HEX("       correctionField-correctionNs", frame->payload + 8, (6));
-                ESP_LOG_BUFFER_HEX("    correctionField-correctionSubNs", frame->payload + 14, (2));
-                ESP_LOG_BUFFER_HEX("                messageTypeSpecific", frame->payload + 16, (4));
-                ESP_LOG_BUFFER_HEX("                      clockIdentity", frame->payload + 20, (8));
-                ESP_LOG_BUFFER_HEX("                       sourcePortID", frame->payload + 28, (2));
-                ESP_LOG_BUFFER_HEX("                         sequenceID", frame->payload + 30, (2));
-                ESP_LOG_BUFFER_HEX("                       controlField", frame->payload + 32, (1));
-                ESP_LOG_BUFFER_HEX("                   logMessagePeriod", frame->payload + 33, (1));
-        switch (type) {
-            case avb_frame_gptp_announce:
-                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
-                ESP_LOG_BUFFER_HEX("             originCurrentUTCOffset", frame->payload + 44, (2));
-                ESP_LOG_BUFFER_HEX("                      reserved8bits", frame->payload + 46, (1));
-                ESP_LOG_BUFFER_HEX("                          priority1", frame->payload + 47, (1));
-                ESP_LOG_BUFFER_HEX("              grandmasterClockClass", frame->payload + 48, (1));
-                ESP_LOG_BUFFER_HEX("           grandmasterClockAccuracy", frame->payload + 49, (1));
-                ESP_LOG_BUFFER_HEX("           grandmasterClockVariance", frame->payload + 50, (2));
-                ESP_LOG_BUFFER_HEX("                          priority2", frame->payload + 52, (1));
-                ESP_LOG_BUFFER_HEX("           grandmasterClockIdentity", frame->payload + 53, (8));
-                ESP_LOG_BUFFER_HEX("                  localStepsRemoved", frame->payload + 61, (2));
-                ESP_LOG_BUFFER_HEX("                         timeSource", frame->payload + 63, (1));
-                ESP_LOG_BUFFER_HEX("                 tlvType(pathTrace)", frame->payload + 64, (2));
-                ESP_LOG_BUFFER_HEX("           pathTraceTlv-lengthField", frame->payload + 66, (2));
-                ESP_LOG_BUFFER_HEX("         pathTraceTlv(pathSequence)", frame->payload + 68, (8));
-                break;
-            case avb_frame_gptp_sync:
-                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
-                break;
-            case avb_frame_gptp_follow_up:
-                ESP_LOG_BUFFER_HEX("    preciseOriginTimestamp(seconds)", frame->payload + 34, (6));
-                ESP_LOG_BUFFER_HEX("preciseOriginTimestamp(nanoseconds)", frame->payload + 40, (4));
-                ESP_LOG_BUFFER_HEX("     tlvType(organizationExtension)", frame->payload + 44, (2));
-                ESP_LOG_BUFFER_HEX("                     tlvLengthField", frame->payload + 46, (2));
-                ESP_LOG_BUFFER_HEX("                 tlv-organizationId", frame->payload + 48, (3));
-                ESP_LOG_BUFFER_HEX("            tlv-organizationSubType", frame->payload + 51, (3));
-                ESP_LOG_BUFFER_HEX("     tlv-cumulativeScaledRateOffset", frame->payload + 54, (4));
-                ESP_LOG_BUFFER_HEX("            tlv-gmTimeBaseIndicator", frame->payload + 58, (2));
-                ESP_LOG_BUFFER_HEX("              tlv-lastGMPhaseChange", frame->payload + 70, (12));
-                ESP_LOG_BUFFER_HEX("         tlv-scaledLastGmFreqChange", frame->payload + 74, (4));
-                break;
-            case avb_frame_gptp_pdelay_request:
-                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
-                ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 44, (10));
-                break;
-            case avb_frame_gptp_pdelay_response:
-                ESP_LOG_BUFFER_HEX("       requestReceiptTimestamp(sec)", frame->payload + 34, (6));
-                ESP_LOG_BUFFER_HEX("   requestReceiptTimestamp(nanosec)", frame->payload + 40, (4));
-                ESP_LOG_BUFFER_HEX("       requestingSourcePortIdentity", frame->payload + 44, (8));
-                ESP_LOG_BUFFER_HEX("             requestingSourcePortId", frame->payload + 52, (2));
-                break;
-            case avb_frame_gptp_pdelay_follow_up:
-                ESP_LOG_BUFFER_HEX("       responseOriginTimestamp(sec)", frame->payload + 34, (6));
-                ESP_LOG_BUFFER_HEX("   responseOriginTimestamp(nanosec)", frame->payload + 40, (4));
-                ESP_LOG_BUFFER_HEX("       requestingSourcePortIdentity", frame->payload + 44, (8));
-                ESP_LOG_BUFFER_HEX("             requestingSourcePortId", frame->payload + 52, (2));
-                break;
-            default:
-                ESP_LOGI(TAG, "Can't print frame with unknown Ethertype.");
+        if (format == 0) { // short
+            ESP_LOGI(TAG, "%s from %s", get_frame_type_name(type), mac_address_to_string(frame->header.src.addr));
         }
-        ESP_LOGI(TAG, "*** End of Frame ***");
+        else {
+            ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);
+                    ESP_LOG_BUFFER_HEX("                        destination", &frame->header.dest, (6));
+                    ESP_LOG_BUFFER_HEX("                             source", &frame->header.src, (6));
+                    ESP_LOG_BUFFER_HEX("                          etherType", &frame->header.type, (2));
+                    ESP_LOG_BUFFER_HEX("             majorSdoId,messageType", frame->payload, (1));
+                    ESP_LOG_BUFFER_HEX("         minorVersionPtp,versionPtp", frame->payload + 1, (1));
+                    ESP_LOG_BUFFER_HEX("                      messageLength", frame->payload + 2, (2));
+                    ESP_LOG_BUFFER_HEX("                       domainNumber", frame->payload + 4, (1));
+                    ESP_LOG_BUFFER_HEX("                         minorSdoId", frame->payload + 5, (1));
+                    ESP_LOG_BUFFER_HEX("flags,ptpTimescale,ptpUtcReasonable", frame->payload + 6, (2));
+                    ESP_LOG_BUFFER_HEX("       correctionField-correctionNs", frame->payload + 8, (6));
+                    ESP_LOG_BUFFER_HEX("    correctionField-correctionSubNs", frame->payload + 14, (2));
+                    ESP_LOG_BUFFER_HEX("                messageTypeSpecific", frame->payload + 16, (4));
+                    ESP_LOG_BUFFER_HEX("                      clockIdentity", frame->payload + 20, (8));
+                    ESP_LOG_BUFFER_HEX("                       sourcePortID", frame->payload + 28, (2));
+                    ESP_LOG_BUFFER_HEX("                         sequenceID", frame->payload + 30, (2));
+                    ESP_LOG_BUFFER_HEX("                       controlField", frame->payload + 32, (1));
+                    ESP_LOG_BUFFER_HEX("                   logMessagePeriod", frame->payload + 33, (1));
+            switch (type) {
+                case avb_frame_gptp_announce:
+                    ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
+                    ESP_LOG_BUFFER_HEX("             originCurrentUTCOffset", frame->payload + 44, (2));
+                    ESP_LOG_BUFFER_HEX("                      reserved8bits", frame->payload + 46, (1));
+                    ESP_LOG_BUFFER_HEX("                          priority1", frame->payload + 47, (1));
+                    ESP_LOG_BUFFER_HEX("              grandmasterClockClass", frame->payload + 48, (1));
+                    ESP_LOG_BUFFER_HEX("           grandmasterClockAccuracy", frame->payload + 49, (1));
+                    ESP_LOG_BUFFER_HEX("           grandmasterClockVariance", frame->payload + 50, (2));
+                    ESP_LOG_BUFFER_HEX("                          priority2", frame->payload + 52, (1));
+                    ESP_LOG_BUFFER_HEX("           grandmasterClockIdentity", frame->payload + 53, (8));
+                    ESP_LOG_BUFFER_HEX("                  localStepsRemoved", frame->payload + 61, (2));
+                    ESP_LOG_BUFFER_HEX("                         timeSource", frame->payload + 63, (1));
+                    ESP_LOG_BUFFER_HEX("                 tlvType(pathTrace)", frame->payload + 64, (2));
+                    ESP_LOG_BUFFER_HEX("           pathTraceTlv-lengthField", frame->payload + 66, (2));
+                    ESP_LOG_BUFFER_HEX("         pathTraceTlv(pathSequence)", frame->payload + 68, (8));
+                    break;
+                case avb_frame_gptp_sync:
+                    ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
+                    break;
+                case avb_frame_gptp_follow_up:
+                    ESP_LOG_BUFFER_HEX("    preciseOriginTimestamp(seconds)", frame->payload + 34, (6));
+                    ESP_LOG_BUFFER_HEX("preciseOriginTimestamp(nanoseconds)", frame->payload + 40, (4));
+                    ESP_LOG_BUFFER_HEX("     tlvType(organizationExtension)", frame->payload + 44, (2));
+                    ESP_LOG_BUFFER_HEX("                     tlvLengthField", frame->payload + 46, (2));
+                    ESP_LOG_BUFFER_HEX("                 tlv-organizationId", frame->payload + 48, (3));
+                    ESP_LOG_BUFFER_HEX("            tlv-organizationSubType", frame->payload + 51, (3));
+                    ESP_LOG_BUFFER_HEX("     tlv-cumulativeScaledRateOffset", frame->payload + 54, (4));
+                    ESP_LOG_BUFFER_HEX("            tlv-gmTimeBaseIndicator", frame->payload + 58, (2));
+                    ESP_LOG_BUFFER_HEX("              tlv-lastGMPhaseChange", frame->payload + 70, (12));
+                    ESP_LOG_BUFFER_HEX("         tlv-scaledLastGmFreqChange", frame->payload + 74, (4));
+                    break;
+                case avb_frame_gptp_pdelay_request:
+                    ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 34, (10));
+                    ESP_LOG_BUFFER_HEX("                     reserved80bits", frame->payload + 44, (10));
+                    break;
+                case avb_frame_gptp_pdelay_response:
+                    ESP_LOG_BUFFER_HEX("       requestReceiptTimestamp(sec)", frame->payload + 34, (6));
+                    ESP_LOG_BUFFER_HEX("   requestReceiptTimestamp(nanosec)", frame->payload + 40, (4));
+                    ESP_LOG_BUFFER_HEX("       requestingSourcePortIdentity", frame->payload + 44, (8));
+                    ESP_LOG_BUFFER_HEX("             requestingSourcePortId", frame->payload + 52, (2));
+                    break;
+                case avb_frame_gptp_pdelay_response_follow_up:
+                    ESP_LOG_BUFFER_HEX("       responseOriginTimestamp(sec)", frame->payload + 34, (6));
+                    ESP_LOG_BUFFER_HEX("   responseOriginTimestamp(nanosec)", frame->payload + 40, (4));
+                    ESP_LOG_BUFFER_HEX("       requestingSourcePortIdentity", frame->payload + 44, (8));
+                    ESP_LOG_BUFFER_HEX("             requestingSourcePortId", frame->payload + 52, (2));
+                    break;
+                default:
+                    ESP_LOGI(TAG, "Can't print frame with unknown Ethertype: 0x%x", type);
+            }
+            ESP_LOGI(TAG, "*** End of Frame ***");
+        }
     }
 }
