@@ -3,3 +3,5 @@ Kconfig.projbuild
 .DS_Store
 .vscode/
 components/
+sdkconfig
+sdkconfig.old
