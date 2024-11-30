@@ -75,18 +75,30 @@ static void gptp_task(void *pvParameters) {
             }
         }
 
-        // Get the frame from the fd
+        // Get the frame from the fd, detect the frame type and set the timestamp of receipt
         eth_frame_t frame;
         if (get_frame(l2tap_gptp_fd, ethertype_gptp, &frame) == ESP_FAIL) {
             break;
         }
-        // Log the received frame
-        print_frame(frame.frame_type, &frame, PRINT_SUMMARY);
+
+        // Log the frame
+        print_frame(&frame, PRINT_SUMMARY);
 
         // Handle each type of frame that needs action
         switch(frame.frame_type) {
             case avb_frame_gptp_pdelay_request:
                 send_gptp_pdelay_response(&frame);
+                break;
+            case avb_frame_gptp_pdelay_response:
+                // check if the sequence_id matches the last request sent
+                // if so, save the requeset_receipt_timestamp from the response
+                // and set the gptp_last_pdelay_response_timestamp
+                // if not, discard the response
+                break;
+            case avb_frame_gptp_pdelay_response_follow_up:
+                // check if the sequence_id matches the last request sent
+                // if so, save the response_origin_timestamp from the response
+                // if not, discard the response follow up
                 break;
             default:
                 // nuthin
@@ -105,36 +117,50 @@ void send_gptp_pdelay_response(eth_frame_t * req_frame) {
     frame.frame_type = avb_frame_gptp_pdelay_response;
     append_gptpdu(frame.frame_type, &frame);
 
-    // Send response
-    send_frame(&frame);
-    print_frame(frame.frame_type, &frame, PRINT_VERBOSE);
-    
-    // Reuse the frame, change payload to response follow up message with timestamp
-    frame.frame_type = avb_frame_gptp_pdelay_response_follow_up;
-    append_gptpdu(frame.frame_type, &frame);
+    // -- Process response based on request frame data --
 
-    // Process response based on request frame data
-    int64_t tv_sec = (int64_t)gptp_last_pdelay_response_timestamp.tv_sec;
-    int64_t tv_nsec = (int64_t)gptp_last_pdelay_response_timestamp.tv_usec * 1000L;
-    ESP_LOGI("########", "64sec %llu", tv_sec);
+    // Insert the sequence_id from the request frame
+    memcpy(frame.payload + 30, req_frame->payload + 30, (2));
+
+    // Insert the requeset_receipt_timestamp from the request time of receipt
     uint8_t timestamp_sec[6] = {};
     uint8_t timestamp_nsec[4] = {};
-    memcpy(timestamp_sec, &tv_sec, (6));
-    memcpy(timestamp_nsec, &tv_nsec, (4));
-    reverse_octets(timestamp_sec, sizeof(timestamp_sec));
-    reverse_octets(timestamp_nsec, sizeof(timestamp_nsec));
-    
-    // how to extract int64 from timestamp buffer
-    int64_t backto64 = octets_to_uint64(timestamp_sec, sizeof(timestamp_sec));
+    timeval_to_octets(&req_frame->time_received, timestamp_sec, timestamp_nsec);
+    memcpy(frame.payload + 34, &timestamp_sec, (6)); // requestReceiptTimestamp(sec)
+    memcpy(frame.payload + 40, &timestamp_nsec, (4)); // requestReceiptTimestamp(nanosec)
 
+    // Insert the requesting_source_port_identity from the request frame clock_identity
+    memcpy(frame.payload + 44, req_frame->payload + 20, (8));
+    // Insert the requesting_source_port_id from the request frame source_port_id
+    memcpy(frame.payload + 52, req_frame->payload + 28, (2));
+
+    // Send response
+    send_frame(&frame);
+    print_frame(&frame, PRINT_VERBOSE);
+
+    // --- Process response follow up based on request and response frame data ---
+    
+    // Reuse the frame; change payload to response follow up
+    // Re-insert the sequence_id, requesting_source_port_identity, and requesting_source_port_id
+    frame.frame_type = avb_frame_gptp_pdelay_response_follow_up;
+    append_gptpdu(frame.frame_type, &frame);
+    memcpy(frame.payload + 30, req_frame->payload + 30, (2));
+    memcpy(frame.payload + 44, req_frame->payload + 20, (8));
+    memcpy(frame.payload + 52, req_frame->payload + 28, (2));
+
+    // Insert the response_origin_timestamp from the response time of transmission
+    // gptp_timestamp_last_sent_pdelay_response was updated when the response was sent
+    timeval_to_octets(&gptp_timestamp_last_sent_pdelay_response, timestamp_sec, timestamp_nsec);
     memcpy(frame.payload + 34, &timestamp_sec, (6)); // responseOriginTimestamp(sec)
     memcpy(frame.payload + 40, &timestamp_nsec, (4)); // responseOriginTimestamp(nanosec)
-    memcpy(frame.payload + 44, req_frame->payload + 20, (8)); // requestingSourcePortIdentity (from clockIdentity)
-    memcpy(frame.payload + 52, req_frame->payload + 28, (2)); // requestingSourcePortId
+
+    // how to extract int64 from timestamp in buffer
+    int64_t backto64 = octets_to_uint64(timestamp_sec, sizeof(timestamp_sec));
+    backto64 += octets_to_uint64(timestamp_nsec, sizeof(timestamp_nsec));
     
     // Send response follow up
     send_frame(&frame);
-    print_frame(frame.frame_type, &frame, PRINT_VERBOSE);
+    print_frame(&frame, PRINT_VERBOSE);
 }
 
 // AVTP communication management task
@@ -148,7 +174,7 @@ static void avtp_task(void *pvParameters) {
     struct queue_message_t *p_message_for_avtp_task;
 
     // Create a message to send to tx queue
-    struct queue_message_t message_for_main_task = {0,0,{0}};
+    struct queue_message_t message_for_main_task = {0, 0, { 0 }};
     struct queue_message_t *p_message_for_main_task = &message_for_main_task;
 
     // Create a queue capable of containing 10 pointers to queue_message_t structures.
@@ -175,14 +201,13 @@ static void avtp_task(void *pvParameters) {
                 ESP_LOGI(TAG, "I got a text!");
             }
         }
-
-        // Get the frame from the fd
+        // Get the frame from the fd, detect the frame type and set the timestamp of receipt
         eth_frame_t frame;
         if (get_frame(l2tap_avtp_fd, ethertype_avtp, &frame) == ESP_FAIL) {
             break;
         }
         // Log the received frame
-        print_frame(frame.frame_type, &frame, 0);
+        print_frame(&frame, PRINT_SUMMARY);
 
         // Do something with the frame
     }
@@ -201,7 +226,7 @@ static void msrp_task(void *pvParameters) {
     struct queue_message_t *p_message_for_msrp_task;
 
     // Create a message to send to tx queue
-    struct queue_message_t message_for_main_task = {0,0,{0}};
+    struct queue_message_t message_for_main_task = { 0, 0, { 0 }};
     struct queue_message_t *p_message_for_main_task = &message_for_main_task;
 
     // Create a queue capable of containing 10 pointers to queue_message_t structures.
@@ -228,14 +253,13 @@ static void msrp_task(void *pvParameters) {
                 ESP_LOGI(TAG, "I got a text!");
             }
         }
-
-        // Get the frame from the fd
+        // Get the frame from the fd, detect the frame type and set the timestamp of receipt
         eth_frame_t frame;
         if (get_frame(l2tap_msrp_fd, ethertype_msrp, &frame) == ESP_FAIL) {
             break;
         }
         // Log the received frame
-        print_frame(frame.frame_type, &frame, 0);
+        print_frame(&frame, PRINT_SUMMARY);
 
         // Do something with the frame
     }
@@ -281,14 +305,13 @@ static void mvrp_task(void *pvParameters) {
                 ESP_LOGI(TAG, "I got a text!");
             }
         }
-
-        // Get the frame from the fd
+        // Get the frame from the fd, detect the frame type and set the timestamp of receipt
         eth_frame_t frame;
         if (get_frame(l2tap_mvrp_fd, ethertype_mvrp, &frame) == ESP_FAIL) {
             break;
         }
         // Log the received frame
-        print_frame(frame.frame_type, &frame, 0);
+        print_frame(&frame, PRINT_SUMMARY);
 
         // Do something with the frame
     }
@@ -405,6 +428,9 @@ esp_err_t get_frame(int fd, ethertype_t ethertype, eth_frame_t *frame) {
             // Copy frame data to frame struct
             memcpy(frame, (eth_frame_t *)rx_buffer, len);
 
+            // Remember the timestamp of receipt
+            gettimeofday(&frame->time_received, NULL);
+
             // Detect the frame type for proper handling
             avb_frame_type_t frame_type = avb_frame_unknown;
             switch (ethertype) {
@@ -487,10 +513,10 @@ esp_err_t send_frame(eth_frame_t *frame) {
 
     // Save timestamp for follow up
     if (frame->frame_type == avb_frame_gptp_pdelay_response) {
-        gettimeofday(&gptp_last_pdelay_response_timestamp, NULL);
+        gettimeofday(&gptp_timestamp_last_sent_pdelay_response, NULL);
     }
     else {
-        gettimeofday(&gptp_last_sync_timestamp, NULL);
+        gettimeofday(&gptp_timestamp_last_sent_sync, NULL);
     }
     // Send away!
     ssize_t len = write(fd, frame, frame->payload_size + ETH_HEADER_LEN);
@@ -501,8 +527,8 @@ esp_err_t send_frame(eth_frame_t *frame) {
     return ESP_OK;
 }
 
-// Print out the frame (uses PRINT_FRAME_FORMAT; 0 for short (default), 1 for long format)
-void print_frame(avb_frame_type_t type, eth_frame_t *frame, int format) {
+// Print out the frame (format: 0 for short (default), 1 for long format)
+void print_frame_of_type(avb_frame_type_t type, eth_frame_t *frame, int format) {
     if (frame->payload_size < 2) {
         ESP_LOGI(TAG, "Can't print frame, payload is too small: %d", frame->payload_size);
     }
@@ -521,6 +547,11 @@ void print_frame(avb_frame_type_t type, eth_frame_t *frame, int format) {
                 ESP_LOGI(TAG, "Can't print frame of unknown frame type: 0x%x", type);
         }
     }
+}
+
+// Print out the frame; get type from frame
+void print_frame(eth_frame_t *frame, int format) {
+    print_frame_of_type(frame->frame_type, frame, format);
 }
 
 // Starup the talker

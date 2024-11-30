@@ -205,3 +205,18 @@ char* mac_address_to_string(uint8_t *address) {
         address[0], address[1], address[2], address[3], address[4], address[5]);
     return string;
 }
+
+// Convert timeval to octets
+void timeval_to_octets(struct timeval *tv, uint8_t *buffer_sec, uint8_t *buffer_nsec) {
+    //ESP_LOGI(TAG, "timeval_to_octets: %lld.%ld", tv->tv_sec, tv->tv_usec);
+    int64_t tv_sec = (int64_t)tv->tv_sec;
+    int64_t tv_nsec = (int64_t)tv->tv_usec * 1000L;
+    memcpy(buffer_sec, &tv_sec, 6);
+    memcpy(buffer_nsec, &tv_nsec, 4);
+    //ESP_LOG_BUFFER_HEX("sec:", buffer_sec, (6));
+    //ESP_LOG_BUFFER_HEX("nsec:", buffer_nsec, (4));
+    reverse_octets(buffer_sec, (6));
+    reverse_octets(buffer_nsec, (4));
+    //ESP_LOG_BUFFER_HEX("rev_sec:", buffer_sec, (6));
+    //ESP_LOG_BUFFER_HEX("rev_nsec:", buffer_nsec, (4));
+}

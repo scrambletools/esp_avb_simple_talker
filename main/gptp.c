@@ -151,6 +151,50 @@ static uint8_t frame_template_gptp_pdelay_response_follow_up[] = {
     0x00,0x01 // requestingSourcePortId: 1
 }; // 54 bytes
 
+/*
+Return true if the candidate gm is better than the current gm
+BMCAComparison Criteria:
+	1.	Priority1:
+	•	A user-configurable value (0-255).
+	•	Lower values indicate higher priority.
+	2.	Clock Class:
+	•	Indicates the clock’s quality or type (e.g., GPS-synchronized clock, atomic clock).
+	•	Lower values indicate higher quality.
+	3.	Clock Accuracy:
+	•	Indicates the clock’s estimated precision relative to the standard time.
+	•	Smaller values represent higher accuracy.
+	4.	Offset Scaled Log Variance:
+	•	A measure of the clock’s stability and precision over time.
+	•	Smaller values are better.
+	5.	Priority2:
+	•	Another user-configurable value, used as a secondary tiebreaker (0-255).
+	•	Lower values indicate higher priority.
+	6.	Clock Identity:
+	•	A unique identifier for each clock (e.g., MAC address).
+	•	Used as the final tiebreaker (lexicographically lowest wins).
+*/
+bool evaluate_bmca(gptp_gm_t *gm_candidate) {
+    if (gm_candidate->priority1 < current_gm.priority1) {
+        return true;
+    }
+    if (gm_candidate->clock_class < current_gm.clock_class) {
+        return true;
+    }
+    if (gm_candidate->clock_accuracy < current_gm.clock_accuracy) {
+        return true;
+    }
+    if (gm_candidate->clock_variance < current_gm.clock_variance) {
+        return true;
+    }
+    if (gm_candidate->priority2 < current_gm.priority2) {
+        return true;
+    }
+    if (gm_candidate->clock_id < current_gm.clock_id) {
+        return true;
+    }
+    return false;
+}
+
 // Append gptpdu to a frame based on frame type and set the payload_size
 // Prior to appending, overwrite template values with config data
 void append_gptpdu(avb_frame_type_t type, eth_frame_t *frame) {

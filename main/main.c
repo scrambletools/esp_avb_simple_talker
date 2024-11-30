@@ -1,18 +1,18 @@
 #include <stdio.h>
 #include <inttypes.h>
-#include "sdkconfig.h"
-#include "freertos/FreeRTOS.h"
-#include "nvs_flash.h"
-#include "esp_system.h"
-#include "esp_err.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "esp_eth.h"
-#include "esp_netif.h"
-#include "driver/gpio.h"
-#include "lwip/prot/ethernet.h" // Ethernet header
-#include "driver/timer.h"
-#include "lwip/ip_addr.h"
+#include <sdkconfig.h>
+#include <freertos/FreeRTOS.h>
+#include <driver/gpio.h>
+#include <driver/timer.h>
+#include <nvs_flash.h>
+#include <esp_system.h>
+#include <esp_err.h>
+#include <esp_event.h>
+#include <esp_log.h>
+#include <esp_eth.h>
+#include <esp_netif.h>
+#include <lwip/prot/ethernet.h> // Ethernet header
+#include <lwip/ip_addr.h>
 #include "talker.h"
 
 // static IP fallback values

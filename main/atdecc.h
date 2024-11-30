@@ -2,9 +2,9 @@
 #define ESP_AVB_SIMPLE_TALKER_INCLUDE_ATDECC_H_
 
 #include <stdlib.h>
-#include "esp_log.h"
-#include "utils.h"
+#include <esp_log.h>
 #include "avtp.h"
+#include "utils.h"
 #include "config.h"
 
 #define ATDECC_TEMPLATE_MAX_SIZE 500

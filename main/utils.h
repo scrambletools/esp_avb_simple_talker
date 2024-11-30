@@ -1,11 +1,11 @@
 #ifndef ESP_AVB_SIMPLE_TALKER_INCLUDE_UTILS_H_
 #define ESP_AVB_SIMPLE_TALKER_INCLUDE_UTILS_H_
 
-#include "esp_log.h"
-#include "esp_eth.h"
-#include "lwip/prot/ethernet.h" // Ethernet header
-#include "lwip/prot/ieee.h"
-#include "arpa/inet.h" // ntohs
+#include <esp_log.h>
+#include <esp_eth.h>
+#include <lwip/prot/ethernet.h> // Ethernet header
+#include <lwip/prot/ieee.h>
+#include <arpa/inet.h> // ntohs
 #include <string.h>
 
 #define AVTP_MAX_PAYLOAD_LENGTH 1486
@@ -96,6 +96,8 @@ typedef struct {
     uint8_t payload[AVTP_MAX_PAYLOAD_LENGTH];
 		ssize_t payload_size;
 		avb_frame_type_t frame_type;
+		struct timeval time_sent;
+		struct timeval time_received;
 } eth_frame_t;
 
 // Functions
@@ -115,5 +117,6 @@ uint64_t reverse_endianness_64(uint64_t value);
 uint32_t reverse_endianness_32(uint32_t value);
 uint16_t reverse_endianness_16(uint16_t value);
 char* mac_address_to_string(uint8_t *address);
+void timeval_to_octets(struct timeval *tv, uint8_t *buffer_sec, uint8_t *buffer_nsec);
 
 #endif /* ESP_AVB_SIMPLE_TALKER_INCLUDE_UTILS_H_ */
