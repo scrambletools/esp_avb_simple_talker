@@ -52,6 +52,7 @@ static struct timeval gptp_timestamp_last_received_pdelay_response_follow_up; //
 static struct timeval gptp_timestamp_last_sent_sync; // sync transmit ts from local gm
 static struct timeval gptp_timestamp_last_sent_pdelay_response; // response transmit ts from local
 
+// NEED GETTER AND SETTER FOR THESE
 // Managed sequence ids with initial values
 static uint8_t gptp_sequence_id_last_received_sync[2] =            { 0 };
 static uint8_t gptp_sequence_id_last_received_pdelay_request[2] =  { 0 };

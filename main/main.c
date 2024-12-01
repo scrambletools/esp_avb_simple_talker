@@ -11,7 +11,6 @@
 #include <esp_log.h>
 #include <esp_eth.h>
 #include <esp_netif.h>
-#include <lwip/prot/ethernet.h> // Ethernet header
 #include <lwip/ip_addr.h>
 #include "talker.h"
 

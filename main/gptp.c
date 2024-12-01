@@ -225,8 +225,10 @@ void append_gptpdu(avb_frame_type_t type, eth_frame_t *frame) {
             break;
         default:
             ESP_LOGE(TAG, "Can't create %s, not supported yet.", get_frame_type_name(type));
-        // Overwrite general gPTP config values
-        memcpy(frame->payload + 20, CONFIG_CLOCK_ID, sizeof(CONFIG_CLOCK_ID)); // clock identity
+        // Overwrite with general gPTP config values
+        uint64_t clock_id = CONFIG_CLOCK_ID;
+        int_to_octets(&clock_id, 8, frame->payload + 20);
+        //memcpy(frame->payload + 20, CONFIG_CLOCK_ID, sizeof(CONFIG_CLOCK_ID)); // clock identity
     }
 }
 

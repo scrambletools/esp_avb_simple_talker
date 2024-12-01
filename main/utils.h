@@ -108,6 +108,7 @@ uint64_t octets_to_uint64(const uint8_t *buffer, size_t size);
 uint32_t octets_to_uint32(const uint8_t *buffer, size_t size);
 void reverse_octets(uint8_t *buffer, size_t size);
 void octets_to_binary_string(const uint8_t *buffer, size_t size, char *bit_string);
+void int_to_octets(void *value, size_t size, uint8_t *buffer);
 void int_to_binary_string(uint64_t value, int num_bits, char *bit_string, bool reverse_order);
 void int_to_binary_string_64(uint64_t value, char *bit_string);
 void int_to_binary_string_32(uint32_t value, char *bit_string);
