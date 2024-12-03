@@ -14,11 +14,18 @@
 #define CONFIG_SERIAL_NUMBER 0
 #define CONFIG_TALKER_GUID 0
 #define CONFIG_STREAM_ID 0
+#define CONFIG_PORT_ID 0x0001
 #define CONFIG_AVB_INTERFACE_NAME "AVB Interface"
 #define CONFIG_SAMPLE_RATE 48000
-#define CONFIG_STREAM_FORMAT //{0x02,0x05,0x02,0x18,0x00,0x40,0x60,0x00} // AAF, 24/48, 32bit
+#define CONFIG_STREAM_FORMAT 0x0205021800406000 // AAF, 24/48, 32bit
 #define CONFIG_GM_CAPABLE true // Will announce GM capability
+#define CONFIG_GM_TIMEOUT 1000000 // Timeout for GM in usec
+#define CONFIG_GM_LIST_SIZE 10 // Number of GMs to keep in list
 
 //static const uint8_t CONFIG_CLOCK_ID[8] = { 0x00,0x01,0xa2,0xb3,0xc4,0xd5,0xe6,0xf7 };
+
+// Declare the functions
+void set_shared_value(int value);
+int get_shared_value(void);
 
 #endif /* ESP_AVB_SIMPLE_TALKER_INCLUDE_CONFIG_H_ */

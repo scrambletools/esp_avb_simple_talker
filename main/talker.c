@@ -14,6 +14,22 @@ QueueHandle_t queue_for_avtp_task;
 QueueHandle_t queue_for_msrp_task;
 QueueHandle_t queue_for_mvrp_task;
 
+// gPTP state variables
+static bool gm_is_present = false; // a gm is present (local or remote)
+static bool gm_is_local = false; // local host is currently gm
+static bool time_is_set = false; // time has been set (by NTP or other GM)
+
+// GM, pdelay and offset variables
+static gptp_gm_info_t current_gm = {};
+static gptp_pdelay_info_t current_pdelay = {};
+static gptp_offset_info_t current_offset = {};
+static gptp_gm_info_t gm_list[CONFIG_GM_LIST_SIZE] = {};
+
+// Sequence IDs
+static uint16_t pdelay_request_sequence_id = 0;
+static uint16_t announce_sequence_id = 0;
+static uint16_t sync_sequence_id = 0;
+
 // Ethernet driver handle
 static esp_eth_handle_t eth_handle = NULL;
 
@@ -26,6 +42,22 @@ static void gptp_task(void *pvParameters) {
     // Define task specific logging tag
     static const char *TAG = "TASK-GPTP";
     ESP_LOGI(TAG, "Started GPTP Management Task.");
+
+    // Initialize GM state variables
+    get_gm_is_present(&gm_is_present);
+    get_gm_is_local(&gm_is_local);
+    get_time_is_set(&time_is_set);
+
+    // Initialize current GM, pdelay and offset information
+    get_current_gm(&current_gm);
+    get_current_pdelay(&current_pdelay);
+    get_current_offset(&current_offset);
+
+    // Message transmission rates
+    static const int pdelay_request_period = 1000000; // 1sec (in usec)
+    static const int announce_period = 1000000; // 1sec (in usec)
+    static const int sync_period = 125000; // 125ms (in usec)
+    static const int local_gm_check_period = 1000000; // 1sec (in usec)
 
     // Message for rx queue
     struct queue_message_t *p_message_for_gptp_task;
@@ -45,6 +77,47 @@ static void gptp_task(void *pvParameters) {
     // Send a pointer to a struct queue_message_t object.  Don't block if the queue is full.
     xQueueSend(queue_for_main_task, (void *) &p_message_for_main_task, (TickType_t) 0);
 
+    // Create a timer for pdelay requests
+    const esp_timer_create_args_t pdelay_request_timer_args = {
+            .callback = &send_gptp_pdelay_request,
+            .name = "pdelay-request-timer" // for debugging
+    };
+    esp_timer_handle_t pdelay_request_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&pdelay_request_timer_args, &pdelay_request_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(pdelay_request_timer, pdelay_request_period));
+
+    // If GM capable then setup timers for local gm checks, 
+    // as well as sending announce, sync and follow up messages
+    if (CONFIG_GM_CAPABLE) {
+
+        // Create a timer to check if local gm is needed
+        const esp_timer_create_args_t local_gm_timer_args = {
+                .callback = &check_local_gm,
+                .name = "local-gm-timer" // for debugging
+        };
+        esp_timer_handle_t local_gm_timer;
+        ESP_ERROR_CHECK(esp_timer_create(&local_gm_timer_args, &local_gm_timer));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(local_gm_timer, local_gm_check_period));
+
+        // Create a timer for announce messages
+        const esp_timer_create_args_t announce_timer_args = {
+                .callback = &send_gptp_announce,
+                .name = "announce-timer" // for debugging
+        };
+        esp_timer_handle_t announce_timer;
+        ESP_ERROR_CHECK(esp_timer_create(&announce_timer_args, &announce_timer));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(announce_timer, announce_period));
+
+        // Create a timer for sync messages
+        const esp_timer_create_args_t sync_timer_args = {
+                .callback = &send_gptp_sync,
+                .name = "sync-timer" // for debugging
+        };
+        esp_timer_handle_t sync_timer;
+        ESP_ERROR_CHECK(esp_timer_create(&sync_timer_args, &sync_timer));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(sync_timer, sync_period));
+    }
+
     // Listen loop
     while (1) {
 
@@ -59,7 +132,7 @@ static void gptp_task(void *pvParameters) {
             }
         }
 
-        // Get the frame from the fd, detect the frame type and set the timestamp of receipt
+        // Get next frame from the fd, detect the frame type and set the timestamp of receipt
         eth_frame_t frame;
         if (get_frame(ethertype_gptp, &frame) == ESP_FAIL) {
             break;
@@ -101,8 +174,63 @@ error:
     vTaskDelete(NULL);
 }
 
+// Check if local GM needed
+static void check_local_gm() {
+
+    // If all good do nothing
+    if (gm_is_present && gm_is_local) {
+        return;
+    }
+    // If local GM but not present, then set to present (shouldn't happen)
+    if (gm_is_local) {      
+        gm_is_present = true;
+        return;
+    }
+    // If GM is present but not local, then check if GM timed out
+    if (gm_is_present) {
+        struct timeval timeout_time;
+        gettimeofday(&timeout_time, NULL);
+        timeout_time.tv_sec -= CONFIG_GM_TIMEOUT;
+        // If GM timed out, then remove from list of GMs and check for next best GM
+        if (compare_timeval(current_gm.last_sync, timeout_time) < 0) {
+            // TBD
+        }
+    }
+    // If GM is not present and not local
+    // then initialize GM list, put local GM in first slot, and set to present and local
+    else {
+        // Wipe GM list and put local GM in first slot
+        memset(gm_list, 0, sizeof(gptp_gm_info_t) * CONFIG_GM_LIST_SIZE);
+        gm_list[0] = current_gm;
+        // Set GM state variables
+        gm_is_present = true;
+        gm_is_local = true;
+    }
+}
+
+// Send gPTP peer delay request message
+static void send_gptp_pdelay_request(void* arg) {
+
+    // Increment the sequence id
+    if (pdelay_request_sequence_id == 0xFFFF) { pdelay_request_sequence_id = 1; }
+    else { pdelay_request_sequence_id += 1; }
+
+    // Create a new frame, set the header and append the request message
+    eth_frame_t frame;
+    set_frame_header(lldp_mcast_mac_addr, ethertype_gptp, &frame);
+    frame.frame_type = avb_frame_gptp_pdelay_request;
+    append_gptpdu(frame.frame_type, &frame);
+
+    // Insert the sequence_id
+    int_to_octets(&pdelay_request_sequence_id, frame.payload + 30, 2);
+
+    // Send response
+    send_frame(&frame);
+    //print_frame(&frame, PRINT_VERBOSE);
+}
+
 // Send gPTP peer delay response and follow up messages
-void send_gptp_pdelay_response(eth_frame_t * req_frame) {
+static void send_gptp_pdelay_response(eth_frame_t * req_frame) {
 
     // Create a new frame, set the header and append the response message
     eth_frame_t frame;
@@ -128,8 +256,8 @@ void send_gptp_pdelay_response(eth_frame_t * req_frame) {
     memcpy(frame.payload + 52, req_frame->payload + 28, (2));
 
     // Send response
-    send_frame(&frame);
-    print_frame(&frame, PRINT_VERBOSE);
+    //send_frame(&frame);
+    //print_frame(&frame, PRINT_VERBOSE);
 
     // --- Process response follow up based on request and response frame data ---
     
@@ -142,18 +270,62 @@ void send_gptp_pdelay_response(eth_frame_t * req_frame) {
     memcpy(frame.payload + 52, req_frame->payload + 28, (2));
 
     // Insert the response_origin_timestamp from the response time of transmission
-    // gptp_timestamp_last_sent_pdelay_response was updated when the response was sent
-    timeval_to_octets(&gptp_timestamp_last_sent_pdelay_response, timestamp_sec, timestamp_nsec);
-    memcpy(frame.payload + 34, &timestamp_sec, (6)); // responseOriginTimestamp(sec)
-    memcpy(frame.payload + 40, &timestamp_nsec, (4)); // responseOriginTimestamp(nanosec)
-
-    // how to extract int64 from timestamp in buffer
-    int64_t backto64 = octets_to_uint64(timestamp_sec, sizeof(timestamp_sec));
-    backto64 += octets_to_uint64(timestamp_nsec, sizeof(timestamp_nsec));
+    // using the time_sent from the response that was just sent
+    timeval_to_octets(&frame.time_sent, frame.payload + 34, frame.payload + 40);
+    //memcpy(frame.payload + 34, &timestamp_sec, (6)); // responseOriginTimestamp(sec)
+    //memcpy(frame.payload + 40, &timestamp_nsec, (4)); // responseOriginTimestamp(nanosec)
     
     // Send response follow up
     send_frame(&frame);
     print_frame(&frame, PRINT_VERBOSE);
+}
+
+// Send gPTP announce message (if GM is local)
+static void send_gptp_announce(void* arg) {
+
+    // Increment the sequence id
+    if (announce_sequence_id == 0xFFFF) { announce_sequence_id = 1; }
+    else { announce_sequence_id += 1; }
+
+    // Create a new frame, set the header and append the announce message
+    eth_frame_t frame;
+    set_frame_header(lldp_mcast_mac_addr, ethertype_gptp, &frame);
+    frame.frame_type = avb_frame_gptp_announce;
+    append_gptpdu(frame.frame_type, &frame);
+
+    // Insert the sequence_id
+    int_to_octets(&announce_sequence_id, frame.payload + 30, 2);
+
+    // Insert the local gm info
+    gptp_gm_info_t current_gm;
+    get_current_gm(&current_gm);
+    int_to_octets(&current_gm.priority_1, frame.payload + 47, 1);
+    int_to_octets(&current_gm.clock_class, frame.payload + 48, 1);
+    int_to_octets(&current_gm.clock_accuracy, frame.payload + 49, 1);
+    int_to_octets(&current_gm.clock_variance, frame.payload + 50, 2);
+    int_to_octets(&current_gm.priority_2, frame.payload + 52, 1);
+    int_to_octets(&current_gm.clock_id, frame.payload + 53, 8);
+    int_to_octets(&current_gm.steps_removed, frame.payload + 61, 2);
+    int_to_octets(&current_gm.time_source, frame.payload + 63, 1);
+    int_to_octets(&current_gm.clock_id, frame.payload + 68, 8); // pathTraceTlv(pathSequence)
+
+    // Send the announce message
+    send_frame(&frame);
+    print_frame(&frame, PRINT_VERBOSE);
+}
+
+// Send gPTP sync message
+static void send_gptp_sync(void* arg) {
+
+    // If GM is present, local, and time is set   
+    if (gm_is_present && gm_is_local && time_is_set) {
+
+        // Increment the sequence id
+        if (sync_sequence_id == 0xFFFF) { sync_sequence_id = 1; }
+        else { sync_sequence_id += 1; }
+
+        // Setup and send the sync message, and follow up message
+    }
 }
 
 // AVTP communication management task

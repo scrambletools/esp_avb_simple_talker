@@ -156,12 +156,8 @@ esp_err_t send_frame(eth_frame_t *frame) {
     }
 
     // Save timestamp for follow up (needs to be done immediately before write)
-    if (frame->frame_type == avb_frame_gptp_pdelay_response) {
-        gettimeofday(&gptp_timestamp_last_sent_pdelay_response, NULL);
-    }
-    else {
-        gettimeofday(&gptp_timestamp_last_sent_sync, NULL);
-    }
+    gettimeofday(&frame->time_sent, NULL);
+
     // Send away!
     ssize_t len = write(fd, frame, frame->payload_size + ETH_HEADER_LEN);
     if (len < 0) {

@@ -108,7 +108,7 @@ uint64_t octets_to_uint64(const uint8_t *buffer, size_t size);
 uint32_t octets_to_uint32(const uint8_t *buffer, size_t size);
 void reverse_octets(uint8_t *buffer, size_t size);
 void octets_to_binary_string(const uint8_t *buffer, size_t size, char *bit_string);
-void int_to_octets(void *value, size_t size, uint8_t *buffer);
+void int_to_octets(void *value, uint8_t *buffer, size_t size);
 void int_to_binary_string(uint64_t value, int num_bits, char *bit_string, bool reverse_order);
 void int_to_binary_string_64(uint64_t value, char *bit_string);
 void int_to_binary_string_32(uint32_t value, char *bit_string);
@@ -119,5 +119,9 @@ uint32_t reverse_endianness_32(uint32_t value);
 uint16_t reverse_endianness_16(uint16_t value);
 char* mac_address_to_string(uint8_t *address);
 void timeval_to_octets(struct timeval *tv, uint8_t *buffer_sec, uint8_t *buffer_nsec);
+void timeval_add(struct timeval *result, struct timeval *a, struct timeval *b);
+void timeval_subtract(struct timeval *result, struct timeval *a, struct timeval *b);
+struct timeval timeval_divide_by_int(struct timeval tv, int divisor);
+int compare_timeval(struct timeval t1, struct timeval t2);
 
 #endif /* ESP_AVB_SIMPLE_TALKER_INCLUDE_UTILS_H_ */

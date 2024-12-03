@@ -3,6 +3,49 @@
 // Define logging tag
 static const char *TAG = "GPTP";
 
+// gPTP state values
+static bool gm_is_present = false; // a gm is present (local or remote)
+static bool gm_is_local = false; // local host is currently gm
+static bool time_is_set = false; // time has been set (by NTP or other GM)
+
+// Grandmaster clock information with defaults
+// Taken from remote announce or internal config if local host is gm
+static gptp_gm_info_t current_gm = {
+    .port_id = CONFIG_PORT_ID,
+    .priority_1 = 246,
+    .clock_class = 248,
+    .clock_accuracy = 0xfe,
+    .clock_variance = 1,
+    .priority_2 = 248,
+    .clock_id = CONFIG_CLOCK_ID,
+    .steps_removed = 0,
+    .time_source = 0xa0,
+    .last_sync = {}
+};
+
+// Current peer delay information
+static gptp_pdelay_info_t current_pdelay = {
+	.sequence_id = 0,
+	.timestamp_request_transmission = { 0 },
+	.timestamp_request_receipt = { 0 },
+	.timestamp_response_transmission = { 0 },
+	.timestamp_response_receipt = { 0 },
+	.calculated_pdelay = 0
+};
+
+// Current time offset information
+static gptp_offset_info_t current_offset = {
+	.sequence_id = 0,
+	.timestamp_sync_transmission = { 0 },
+	.timestamp_sync_receipt = { 0 },
+	.timestamp_request_transmission = { 0 },
+	.timestamp_request_receipt = { 0 },
+	.calculated_offset = 0
+};
+
+// GM list
+static gptp_gm_info_t gm_list[CONFIG_GM_LIST_SIZE];
+
 ////////////
 // gPTP messages
 ////////////
@@ -151,6 +194,41 @@ static uint8_t frame_template_gptp_pdelay_response_follow_up[] = {
     0x00,0x01 // requestingSourcePortId: 1
 }; // 54 bytes
 
+// Gets the pointer to the gm_is_present variable
+void get_gm_is_present(bool *is_present) {
+    *is_present = gm_is_present;
+}
+
+// Gets the pointer to the gm_is_local variable
+void get_gm_is_local(bool *is_local) {
+    *is_local = gm_is_local;
+}
+
+// Gets the pointer to the time_is_set variable
+void get_time_is_set(bool *is_set) {
+    *is_set = time_is_set;
+}
+
+// Gets the pointer to the current_gm variable
+void get_current_gm(gptp_gm_info_t *gm_info) {
+    *gm_info = current_gm;
+}
+
+// Gets the pointer to the current_pdelay variable
+void get_current_pdelay(gptp_pdelay_info_t *pdelay_info) {
+    *pdelay_info = current_pdelay;
+}
+
+// Gets the pointer to the current_offset variable
+void get_current_offset(gptp_offset_info_t *offset_info) {
+    *offset_info = current_offset;
+}
+
+// Gets the pointer to the gm_list variable
+void get_gm_list(gptp_gm_info_t *list) {
+    memcpy(list, gm_list, sizeof(gptp_gm_info_t) * CONFIG_GM_LIST_SIZE);
+}
+
 /*
 Return true if the candidate gm is better than the current gm
 BMCAComparison Criteria:
@@ -173,8 +251,9 @@ BMCAComparison Criteria:
 	•	A unique identifier for each clock (e.g., MAC address).
 	•	Used as the final tiebreaker (lexicographically lowest wins).
 */
-bool evaluate_bmca(gptp_gm_t *gm_candidate) {
-    if (gm_candidate->priority1 < current_gm.priority1) {
+bool evaluate_bmca(gptp_gm_info_t *gm_candidate) {
+    int result = memcmp(&gm_candidate->priority_1, &current_gm.priority_1, 1);
+    if (result < 0) {
         return true;
     }
     if (gm_candidate->clock_class < current_gm.clock_class) {
@@ -186,13 +265,45 @@ bool evaluate_bmca(gptp_gm_t *gm_candidate) {
     if (gm_candidate->clock_variance < current_gm.clock_variance) {
         return true;
     }
-    if (gm_candidate->priority2 < current_gm.priority2) {
+    if (gm_candidate->priority_2 < current_gm.priority_2) {
         return true;
     }
     if (gm_candidate->clock_id < current_gm.clock_id) {
         return true;
     }
+    if (gm_candidate->steps_removed < current_gm.steps_removed) {
+        return true;
+    }
+    if (gm_candidate->port_id < current_gm.port_id) {
+        return true;
+    }
     return false;
+}
+
+// Calculate the peer delay: ((req_r - req_t) + (res_r - res_t)) / 2
+uint64_t calculate_pdelay(gptp_pdelay_info_t *pdelay_info) {
+    struct timeval request_delay;
+    struct timeval response_delay;
+    struct timeval calculated_delay;
+    timeval_subtract(&request_delay, &pdelay_info->timestamp_request_receipt, &pdelay_info->timestamp_request_transmission);
+    timeval_subtract(&response_delay, &pdelay_info->timestamp_response_receipt, &pdelay_info->timestamp_response_transmission);
+    timeval_add(&calculated_delay, &request_delay, &response_delay);
+    calculated_delay = timeval_divide_by_int(calculated_delay, 2);
+    uint64_t result = calculated_delay.tv_sec * 1000000000 + calculated_delay.tv_usec * 1000;
+    return result;
+}
+
+// Calculate the offset: ((sync_r - sync_t) - (req_r - req_t)) / 2
+uint64_t calculate_offset(gptp_offset_info_t *offset_info) {
+    struct timeval sync_delay;
+    struct timeval request_delay;
+    struct timeval calculated_offset;
+    timeval_subtract(&sync_delay, &offset_info->timestamp_sync_receipt, &offset_info->timestamp_sync_transmission);
+    timeval_subtract(&request_delay, &offset_info->timestamp_request_receipt, &offset_info->timestamp_request_transmission);
+    timeval_subtract(&calculated_offset, &sync_delay, &request_delay);
+    calculated_offset = timeval_divide_by_int(calculated_offset, 2);
+    uint64_t result = calculated_offset.tv_sec * 1000000000 + calculated_offset.tv_usec * 1000;
+    return result;
 }
 
 // Append gptpdu to a frame based on frame type and set the payload_size
@@ -227,8 +338,9 @@ void append_gptpdu(avb_frame_type_t type, eth_frame_t *frame) {
             ESP_LOGE(TAG, "Can't create %s, not supported yet.", get_frame_type_name(type));
         // Overwrite with general gPTP config values
         uint64_t clock_id = CONFIG_CLOCK_ID;
-        int_to_octets(&clock_id, 8, frame->payload + 20);
-        //memcpy(frame->payload + 20, CONFIG_CLOCK_ID, sizeof(CONFIG_CLOCK_ID)); // clock identity
+        int_to_octets(&clock_id, frame->payload + 20, 8);
+        uint16_t source_port_id = CONFIG_PORT_ID;
+        int_to_octets(&source_port_id, frame->payload + 28, 2);
     }
 }
 

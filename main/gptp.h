@@ -18,49 +18,49 @@ typedef enum {
 
 // Grandmaster structure
 typedef struct {
-    uint8_t clock_id[8];
-    uint8_t clock_class[1];
-    uint8_t clock_accuracy[1];
-    uint8_t clock_variance[1];
-		uint8_t priority1[1];
-    uint8_t priority2[1];
-		uint8_t time_source[1];
-} gptp_gm_t;
+	uint16_t port_id;
+	uint8_t priority_1;
+    uint8_t clock_class;
+    uint8_t clock_accuracy;
+    uint16_t clock_variance;
+	uint8_t priority_2;
+	uint64_t clock_id;
+	uint16_t steps_removed;
+	uint8_t time_source;
+	struct timeval last_sync;
+} gptp_gm_info_t;
 
-// Managed state values
-static int mean_link_delay = 0; // nanoseconds
-static bool gm_is_present = false; // a gm is present (local or remote)
-static bool gm_is_local = false; // local host is currently gm
+// Peer delay information structure
+typedef struct {
+	uint16_t sequence_id;
+    struct timeval timestamp_request_transmission; // from local
+	struct timeval timestamp_request_receipt; // by peer
+    struct timeval timestamp_response_transmission; // from peer
+	struct timeval timestamp_response_receipt; // by local
+	uint64_t calculated_pdelay; // in nsec; ((req_r - req_t) + (res_r - res_t)) / 2
+} gptp_pdelay_info_t;
 
-// Managed grandmaster data with defaults
-// Taken from remote announce or internal config if local host is gm
-static gptp_gm_t current_gm = {
-	{ 0 },    // clock_id
-	{ 248 },  // clock_class
-	{ 0xfe }, // clock_accuracy (unknown)
-	{ 1 },    // clock_variance
-	{ 246 },  // priority1
-	{ 248 },  // priority2
-	{ 0xa0 }  // time_source (internal oscillator)
-};
-
-// Managed timestamps
-static struct timeval gptp_timestamp_last_received_sync; // sync transmit ts from remote gm
-static struct timeval gptp_timestamp_last_received_pdelay_request; // request receipt ts by local
-static struct timeval gptp_timestamp_last_received_pdelay_response; // request receipt ts by peer
-static struct timeval gptp_timestamp_last_received_pdelay_response_follow_up; // response origin timestamp
-static struct timeval gptp_timestamp_last_sent_sync; // sync transmit ts from local gm
-static struct timeval gptp_timestamp_last_sent_pdelay_response; // response transmit ts from local
-
-// NEED GETTER AND SETTER FOR THESE
-// Managed sequence ids with initial values
-static uint8_t gptp_sequence_id_last_received_sync[2] =            { 0 };
-static uint8_t gptp_sequence_id_last_received_pdelay_request[2] =  { 0 };
-static uint8_t gptp_sequence_id_last_sent_sync[2] =                { 0 };
-static uint8_t gptp_sequence_id_last_sent_pdelay_request[2] =      { 0 };
+// Time offset information structure
+typedef struct {
+	uint16_t sequence_id;
+    struct timeval timestamp_sync_transmission; // from master
+	struct timeval timestamp_sync_receipt; // by local
+	struct timeval timestamp_request_transmission; // from local
+	struct timeval timestamp_request_receipt; // by peer
+	uint64_t calculated_offset; // in nsec; ((sync_r - sync_t) - (req_r - req_t)) / 2
+} gptp_offset_info_t;
 
 // Functions
-bool evaluate_bmca(gptp_gm_t *gm_candidate);
+void get_gm_is_present(bool *is_present);
+void get_gm_is_local(bool *is_local);
+void get_time_is_set(bool *is_set);
+void get_current_gm(gptp_gm_info_t *gm_info);
+void get_current_pdelay(gptp_pdelay_info_t *pdelay_info);
+void get_current_offset(gptp_offset_info_t *offset_info);
+void get_gm_list(gptp_gm_info_t *gm_list);
+bool evaluate_bmca(gptp_gm_info_t *gm_candidate_info);
+uint64_t calculate_pdelay(gptp_pdelay_info_t *pdelay_info);
+uint64_t calculate_offset(gptp_offset_info_t *offset_info);
 void append_gptpdu(avb_frame_type_t type, eth_frame_t *frame);
 avb_frame_type_t detect_gptp_frame_type(eth_frame_t *frame, ssize_t size);
 void print_gptp_frame(avb_frame_type_t type, eth_frame_t *frame, int format);

@@ -2,6 +2,7 @@
 #define ESP_AVB_SIMPLE_TALKER_INCLUDE_TALKER_H_
 
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <esp_log.h>
 #include <esp_err.h>
 #include <esp_eth.h>
@@ -16,7 +17,11 @@
 
 // Functions
 static void gptp_task(void *pvParameters);
-void send_gptp_pdelay_response(eth_frame_t * req_frame);
+static void check_local_gm(void* arg);
+static void send_gptp_pdelay_request(void* arg);
+static void send_gptp_pdelay_response(eth_frame_t * req_frame);
+static void send_gptp_announce(void* arg);
+static void send_gptp_sync(void* arg);
 static void avtp_task(void *pvParameters);
 static void msrp_task(void *pvParameters);
 static void mvrp_task(void *pvParameters);

@@ -123,8 +123,9 @@ void octets_to_binary_string(const uint8_t *buffer, size_t size, char *bit_strin
 }
 
 // Converts an integer to a buffer of octets; reverses the order of the octets
-void int_to_octets(void *value, size_t size, uint8_t *buffer) {
-    memcpy(buffer, &value, size);
+void int_to_octets(void *value, uint8_t *buffer, size_t size) {
+    //ESP_LOGI(TAG, "int_to_octets: %lld", (long long)*value);
+    memcpy(buffer, value, size);
     reverse_octets(buffer, size);
 }
 
@@ -212,17 +213,72 @@ char* mac_address_to_string(uint8_t *address) {
     return string;
 }
 
-// Convert timeval to octets
+// Convert timeval to octets; assumes big-endian buffers of size 6 and 4
 void timeval_to_octets(struct timeval *tv, uint8_t *buffer_sec, uint8_t *buffer_nsec) {
     ESP_LOGI(TAG, "timeval_to_octets: %lld.%ld", tv->tv_sec, tv->tv_usec);
     int64_t tv_sec = (int64_t)tv->tv_sec;
     int64_t tv_nsec = (int64_t)tv->tv_usec * 1000L;
     memcpy(buffer_sec, &tv_sec, 6);
     memcpy(buffer_nsec, &tv_nsec, 4);
-    ESP_LOG_BUFFER_HEX("sec:", buffer_sec, (6));
-    ESP_LOG_BUFFER_HEX("nsec:", buffer_nsec, (4));
+    //ESP_LOG_BUFFER_HEX("sec:", buffer_sec, (6));
+    //ESP_LOG_BUFFER_HEX("nsec:", buffer_nsec, (4));
     reverse_octets(buffer_sec, (6));
     reverse_octets(buffer_nsec, (4));
-    ESP_LOG_BUFFER_HEX("rev_sec:", buffer_sec, (6));
-    ESP_LOG_BUFFER_HEX("rev_nsec:", buffer_nsec, (4));
+    //ESP_LOG_BUFFER_HEX("rev_sec:", buffer_sec, (6));
+    //ESP_LOG_BUFFER_HEX("rev_nsec:", buffer_nsec, (4));
+}
+
+// Add two timevals, handling overflow and normalization
+void timeval_add(struct timeval *result, 
+                             struct timeval *a, 
+                             struct timeval *b) {
+    result->tv_sec = a->tv_sec + b->tv_sec;
+    result->tv_usec = a->tv_usec + b->tv_usec;
+    
+    // Normalize if microseconds overflow
+    if (result->tv_usec >= 1000000) {
+        result->tv_sec += result->tv_usec / 1000000;
+        result->tv_usec %= 1000000;
+    }
+}
+
+// Subtract timevals (result = a - b), handling underflow and normalization
+void timeval_subtract(struct timeval *result,
+                                  struct timeval *a,
+                                  struct timeval *b) {
+    result->tv_sec = a->tv_sec - b->tv_sec;
+    result->tv_usec = a->tv_usec - b->tv_usec;
+    
+    // Normalize if microseconds underflow
+    if (result->tv_usec < 0) {
+        result->tv_sec--;
+        result->tv_usec += 1000000;
+    }
+}
+
+// Divide a timeval by an integer, maintaining precision
+struct timeval timeval_divide_by_int(struct timeval tv, int divisor) {
+    struct timeval result;
+    
+    // Convert all to microseconds to maintain precision
+    long long total_usec = (tv.tv_sec * 1000000LL) + tv.tv_usec;
+    
+    // Perform the division
+    total_usec /= divisor;
+    
+    // Convert back to seconds and microseconds
+    result.tv_sec = total_usec / 1000000;
+    result.tv_usec = total_usec % 1000000;
+    
+    return result;
+}
+
+// Compare two timevals
+// Returns: -1 if t1 < t2, 0 if equal, 1 if t1 > t2
+int compare_timeval(struct timeval t1, struct timeval t2) {
+    if (t1.tv_sec < t2.tv_sec) return -1;
+    if (t1.tv_sec > t2.tv_sec) return 1;
+    if (t1.tv_usec < t2.tv_usec) return -1;
+    if (t1.tv_usec > t2.tv_usec) return 1;
+    return 0;
 }
