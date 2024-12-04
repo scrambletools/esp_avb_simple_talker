@@ -61,36 +61,27 @@ const char* get_frame_type_name(avb_frame_type_t type)
     }
 }
 
-// Convert octet buffer to uint64_t or uint32_t; assumes big-endian buffer
-uint64_t octets_to_uint(const uint8_t *buffer, size_t size, int return_64bit) {
-    if (buffer == NULL || size == 0 || size > 8) {
-        return 0; // Return 0 for invalid input
-    }
-
+// Convert octet buffer to uint64_t, uint32_t or uint16_t; assumes big-endian buffer
+// size is buffer size in bytes: 8 (default) >= size >= 0
+uint64_t octets_to_uint(const uint8_t *buffer, size_t size) {
     uint64_t result = 0;
-
+    if (buffer == NULL || size == 0 || size > 8) {
+        return result; // Return 0 for 0 bytes or invalid input
+    }
     // Combine bytes into a uint64_t
     for (size_t i = 0; i < size; i++) {
         result |= ((uint64_t)buffer[i] << (8 * (size - 1 - i))); // Big-endian order
     }
-
-    // If the caller requests a 32-bit integer, truncate the result to 32 bits
-    if (!return_64bit) {
+    // If 2 bytes or less, truncate the result to 16 bits
+    if (size <= 2) {
+        return (uint16_t)result;
+    }
+    // If 4 bytes or less, truncate the result to 32 bits
+    if (size <= 4) {
         return (uint32_t)result;
     }
-
     // Otherwise, return as a 64-bit integer
     return result;
-}
-
-// Helper function for 32-bit
-uint64_t octets_to_uint64(const uint8_t *buffer, size_t size) {
-    return octets_to_uint(buffer, size, true);
-}
-
-// Helper function for 32-bit
-uint32_t octets_to_uint32(const uint8_t *buffer, size_t size) {
-    return octets_to_uint(buffer, size, false);
 }
 
 // Reverses the order of octets in a buffer
@@ -215,7 +206,7 @@ char* mac_address_to_string(uint8_t *address) {
 
 // Convert timeval to octets; assumes big-endian buffers of size 6 and 4
 void timeval_to_octets(struct timeval *tv, uint8_t *buffer_sec, uint8_t *buffer_nsec) {
-    ESP_LOGI(TAG, "timeval_to_octets: %lld.%ld", tv->tv_sec, tv->tv_usec);
+    //ESP_LOGI(TAG, "timeval_to_octets: %lld.%ld", tv->tv_sec, tv->tv_usec);
     int64_t tv_sec = (int64_t)tv->tv_sec;
     int64_t tv_nsec = (int64_t)tv->tv_usec * 1000L;
     memcpy(buffer_sec, &tv_sec, 6);

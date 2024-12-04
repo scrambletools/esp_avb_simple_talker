@@ -3,14 +3,17 @@
 // Define logging tag
 static const char *TAG = "GPTP";
 
-// gPTP state values
-static bool gm_is_present = false; // a gm is present (local or remote)
-static bool gm_is_local = false; // local host is currently gm
-static bool time_is_set = false; // time has been set (by NTP or other GM)
+// gPTP state information
+static gptp_state_info_t gptp_state = {
+    .gm_is_present = false, // a gm is present (local or remote)
+    .gm_is_local = false, // local host is currently gm
+    .time_is_set = false, // time has been set (by NTP or other GM)
+    .pdelay_request_sequence_id = 0 // initialize to 0
+};
 
-// Grandmaster clock information with defaults
-// Taken from remote announce or internal config if local host is gm
-static gptp_gm_info_t current_gm = {
+// GM list (in order of BMCA criteria; first is best and current)
+// Initial GM with default information (used for local GM if no GM is present)
+static gptp_gm_info_t gm_list[CONFIG_GM_LIST_SIZE] ={{
     .port_id = CONFIG_PORT_ID,
     .priority_1 = 246,
     .clock_class = 248,
@@ -20,8 +23,12 @@ static gptp_gm_info_t current_gm = {
     .clock_id = CONFIG_CLOCK_ID,
     .steps_removed = 0,
     .time_source = 0xa0,
-    .last_sync = {}
-};
+    .last_announce = { 0 },
+    .announce_period = CONFIG_GM_ANNOUNCE_PERIOD, // replaced with observed value
+    .announce_sequence_id = 0, // initialize to 0 
+    .sync_period = CONFIG_GM_SYNC_PERIOD, // replaced with observed value
+    .sync_sequence_id = 0 // initialize to 0
+}};
 
 // Current peer delay information
 static gptp_pdelay_info_t current_pdelay = {
@@ -42,9 +49,6 @@ static gptp_offset_info_t current_offset = {
 	.timestamp_request_receipt = { 0 },
 	.calculated_offset = 0
 };
-
-// GM list
-static gptp_gm_info_t gm_list[CONFIG_GM_LIST_SIZE];
 
 ////////////
 // gPTP messages
@@ -194,39 +198,70 @@ static uint8_t frame_template_gptp_pdelay_response_follow_up[] = {
     0x00,0x01 // requestingSourcePortId: 1
 }; // 54 bytes
 
-// Gets the pointer to the gm_is_present variable
-void get_gm_is_present(bool *is_present) {
-    *is_present = gm_is_present;
-}
-
-// Gets the pointer to the gm_is_local variable
-void get_gm_is_local(bool *is_local) {
-    *is_local = gm_is_local;
-}
-
-// Gets the pointer to the time_is_set variable
-void get_time_is_set(bool *is_set) {
-    *is_set = time_is_set;
+// Gets a pointer to the gPTP state information
+gptp_state_info_t* get_gptp_state(void) {
+    return &gptp_state;
 }
 
 // Gets the pointer to the current_gm variable
-void get_current_gm(gptp_gm_info_t *gm_info) {
-    *gm_info = current_gm;
+gptp_gm_info_t* get_current_gm(void) {
+    return &gm_list[0];
 }
 
 // Gets the pointer to the current_pdelay variable
-void get_current_pdelay(gptp_pdelay_info_t *pdelay_info) {
-    *pdelay_info = current_pdelay;
+gptp_pdelay_info_t* get_current_pdelay(void) {
+    return &current_pdelay;
 }
 
 // Gets the pointer to the current_offset variable
-void get_current_offset(gptp_offset_info_t *offset_info) {
-    *offset_info = current_offset;
+gptp_offset_info_t* get_current_offset(void) {
+    return &current_offset;
 }
 
 // Gets the pointer to the gm_list variable
-void get_gm_list(gptp_gm_info_t *list) {
-    memcpy(list, gm_list, sizeof(gptp_gm_info_t) * CONFIG_GM_LIST_SIZE);
+gptp_gm_info_t* get_gm_list(void) {
+    return gm_list;
+}
+
+// Add a GM to the GM list in order of BMCA criteria
+esp_err_t add_to_gm_list(gptp_gm_info_t *gm_to_add) {
+    if (gm_to_add == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    // Compare to each GM in the list using BMCA criteria
+    for (int i = 0; i < CONFIG_GM_LIST_SIZE; i++) {
+        // If the new GM is better than the current GM or if it's the last GM in the list
+        if (evaluate_bmca(gm_to_add, &gm_list[i]) || (i == CONFIG_GM_LIST_SIZE - 1)) {
+            // Insert GM into this slot
+            memmove(&gm_list[i + 1], &gm_list[i], sizeof(gptp_gm_info_t) * (CONFIG_GM_LIST_SIZE - i - 1));
+            gm_list[i] = *gm_to_add;
+            break;
+        }
+    }
+    return ESP_OK;
+}
+
+// Remove a GM from the GM list
+esp_err_t remove_from_gm_list(gptp_gm_info_t *gm_to_remove) {
+    if (gm_to_remove == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    int gm_index = find_gm_index(gm_to_remove->clock_id);
+    if (gm_index == -1) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    memmove(&gm_list[gm_index], &gm_list[gm_index + 1], sizeof(gptp_gm_info_t) * (CONFIG_GM_LIST_SIZE - gm_index - 1));
+    return ESP_OK;
+}
+
+// Find the index of a GM in the GM list using its clock_id
+int find_gm_index(uint64_t clock_id) {
+    for (int i = 0; i < CONFIG_GM_LIST_SIZE; i++) {
+        if (gm_list[i].clock_id == clock_id) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 /*
@@ -251,30 +286,30 @@ BMCAComparison Criteria:
 	•	A unique identifier for each clock (e.g., MAC address).
 	•	Used as the final tiebreaker (lexicographically lowest wins).
 */
-bool evaluate_bmca(gptp_gm_info_t *gm_candidate) {
-    int result = memcmp(&gm_candidate->priority_1, &current_gm.priority_1, 1);
+bool evaluate_bmca(gptp_gm_info_t *gm_a, gptp_gm_info_t *gm_b) {
+    int result = memcmp(&gm_a->priority_1, &gm_b->priority_1, 1);
     if (result < 0) {
         return true;
     }
-    if (gm_candidate->clock_class < current_gm.clock_class) {
+    if (gm_a->clock_class < gm_b->clock_class) {
         return true;
     }
-    if (gm_candidate->clock_accuracy < current_gm.clock_accuracy) {
+    if (gm_a->clock_accuracy < gm_b->clock_accuracy) {
         return true;
     }
-    if (gm_candidate->clock_variance < current_gm.clock_variance) {
+    if (gm_a->clock_variance < gm_b->clock_variance) {
         return true;
     }
-    if (gm_candidate->priority_2 < current_gm.priority_2) {
+    if (gm_a->priority_2 < gm_b->priority_2) {
         return true;
     }
-    if (gm_candidate->clock_id < current_gm.clock_id) {
+    if (gm_a->clock_id < gm_b->clock_id) {
         return true;
     }
-    if (gm_candidate->steps_removed < current_gm.steps_removed) {
+    if (gm_a->steps_removed < gm_b->steps_removed) {
         return true;
     }
-    if (gm_candidate->port_id < current_gm.port_id) {
+    if (gm_a->port_id < gm_b->port_id) {
         return true;
     }
     return false;
@@ -290,6 +325,15 @@ uint64_t calculate_pdelay(gptp_pdelay_info_t *pdelay_info) {
     timeval_add(&calculated_delay, &request_delay, &response_delay);
     calculated_delay = timeval_divide_by_int(calculated_delay, 2);
     uint64_t result = calculated_delay.tv_sec * 1000000000 + calculated_delay.tv_usec * 1000;
+    char data_message[255] = "";
+    sprintf(data_message, "(%lld.%06ld - %lld.%06ld) + (%lld.%06ld - %lld.%06ld) / 2 = %lld.%06ld", 
+        pdelay_info->timestamp_request_receipt.tv_sec, pdelay_info->timestamp_request_receipt.tv_usec,
+        pdelay_info->timestamp_request_transmission.tv_sec, pdelay_info->timestamp_request_transmission.tv_usec,
+        pdelay_info->timestamp_response_receipt.tv_sec, pdelay_info->timestamp_response_receipt.tv_usec,
+        pdelay_info->timestamp_response_transmission.tv_sec, pdelay_info->timestamp_response_transmission.tv_usec,
+        calculated_delay.tv_sec, calculated_delay.tv_usec
+    );
+    ESP_LOGI(TAG, "Calc pdelay: %s", data_message);
     return result;
 }
 
@@ -389,7 +433,47 @@ void print_gptp_frame(avb_frame_type_t type, eth_frame_t *frame, int format) {
     }
     else {
         if (format == 0) { // short
-            ESP_LOGI(TAG, "%s from %s", get_frame_type_name(type), mac_address_to_string(frame->header.src.addr));
+            char data_message[100] = "---";
+            switch (type) {
+                case avb_frame_gptp_announce:
+                    sprintf(data_message, "seq: %lld", 
+                        octets_to_uint(frame->payload + 30, 2)
+                    );
+                    break;
+                case avb_frame_gptp_sync:
+                    sprintf(data_message, "seq: %lld", 
+                        octets_to_uint(frame->payload + 30, 2)
+                    );
+                    break;
+                case avb_frame_gptp_follow_up:
+                    sprintf(data_message, "seq: %lld, pre-orig: %lld.%06lld", 
+                        octets_to_uint(frame->payload + 30, 2), 
+                        octets_to_uint(frame->payload + 34, 6), 
+                        octets_to_uint(frame->payload + 40, 4)
+                    );
+                    break;
+                case avb_frame_gptp_pdelay_request:
+                    sprintf(data_message, "seq: %lld", 
+                        octets_to_uint(frame->payload + 30, 2)
+                    );
+                    break;
+                case avb_frame_gptp_pdelay_response:
+                    sprintf(data_message, "seq: %lld, req-rcpt: %lld.%06lld", 
+                        octets_to_uint(frame->payload + 30, 2), 
+                        octets_to_uint(frame->payload + 34, 6), 
+                        octets_to_uint(frame->payload + 40, 4)
+                    );
+                    break;
+                case avb_frame_gptp_pdelay_response_follow_up:
+                    sprintf(data_message, "seq: %lld, res-orig: %lld.%06lld", 
+                        octets_to_uint(frame->payload + 30, 2), 
+                        octets_to_uint(frame->payload + 34, 6), 
+                        octets_to_uint(frame->payload + 40, 4)
+                    );
+                    break;     
+                default:
+            }
+            ESP_LOGI(TAG, "%s from %s (%s)", get_frame_type_name(type), mac_address_to_string(frame->header.src.addr), data_message);
         }
         else {
             ESP_LOGI(TAG, "*** Print Frame - %s (%d) ***", get_frame_type_name(type), size);

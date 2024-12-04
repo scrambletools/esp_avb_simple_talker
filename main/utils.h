@@ -103,9 +103,10 @@ typedef struct {
 // Functions
 const char* get_ethertype_name(ethertype_t ethertype);
 const char* get_frame_type_name(avb_frame_type_t type);
-uint64_t octets_to_uint(const uint8_t *buffer, size_t size, int return_64bit);
+uint64_t octets_to_uint(const uint8_t *buffer, size_t size);
 uint64_t octets_to_uint64(const uint8_t *buffer, size_t size);
 uint32_t octets_to_uint32(const uint8_t *buffer, size_t size);
+uint16_t octets_to_uint16(const uint8_t *buffer, size_t size);
 void reverse_octets(uint8_t *buffer, size_t size);
 void octets_to_binary_string(const uint8_t *buffer, size_t size, char *bit_string);
 void int_to_octets(void *value, uint8_t *buffer, size_t size);

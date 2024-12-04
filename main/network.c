@@ -69,7 +69,7 @@ esp_err_t get_frame(ethertype_t ethertype, eth_frame_t *frame) {
         // Read a frame from the fd, if any
         ssize_t len = read(fd, rx_buffer, sizeof(rx_buffer));
         if (len > 0) {
-            // Remember the timestamp of receipt (needs to be done immediately after read)
+            // Save the timestamp of receipt (needs to be done immediately after read)
             gettimeofday(&frame->time_received, NULL);
 
             // Copy frame data to frame struct
