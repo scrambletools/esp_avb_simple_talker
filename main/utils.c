@@ -61,19 +61,23 @@ const char* get_frame_type_name(avb_frame_type_t type)
     }
 }
 
-// Convert octet buffer to uint64_t, uint32_t or uint16_t; assumes big-endian buffer
+// Convert octet buffer to uint64_t, uint32_t, uint16_t or uint8_t; assumes big-endian buffer
 // size is buffer size in bytes: 8 (default) >= size >= 0
 uint64_t octets_to_uint(const uint8_t *buffer, size_t size) {
     uint64_t result = 0;
     if (buffer == NULL || size == 0 || size > 8) {
-        return result; // Return 0 for 0 bytes or invalid input
+        return result; // Return 0 for 0 bytes or gracfully handle invalid input
+    }
+    // If 1 byte, truncate the result to 8 bits
+    if (size == 1) {
+        return (uint8_t)result;
     }
     // Combine bytes into a uint64_t
     for (size_t i = 0; i < size; i++) {
         result |= ((uint64_t)buffer[i] << (8 * (size - 1 - i))); // Big-endian order
     }
-    // If 2 bytes or less, truncate the result to 16 bits
-    if (size <= 2) {
+    // If 2 bytes, truncate the result to 16 bits
+    if (size == 2) {
         return (uint16_t)result;
     }
     // If 4 bytes or less, truncate the result to 32 bits
@@ -82,6 +86,12 @@ uint64_t octets_to_uint(const uint8_t *buffer, size_t size) {
     }
     // Otherwise, return as a 64-bit integer
     return result;
+}
+
+// Convert an octet buffer to a timeval
+void octets_to_timeval(const uint8_t *buffer, struct timeval *tv) {
+    tv->tv_sec = octets_to_uint(buffer, 6);
+    tv->tv_usec = (int)(octets_to_uint(buffer + 6, 4) / 1e3);
 }
 
 // Reverses the order of octets in a buffer
@@ -272,4 +282,48 @@ int compare_timeval(struct timeval t1, struct timeval t2) {
     if (t1.tv_usec < t2.tv_usec) return -1;
     if (t1.tv_usec > t2.tv_usec) return 1;
     return 0;
+}
+
+// Add an item to the front of a list
+esp_err_t add_to_list_front(void *item_to_add, void *list, size_t item_size, size_t list_size) {
+    if (item_to_add == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    // Move existing items back by one position
+    memmove(list + item_size, list, item_size * (list_size - 1));
+    // Add new item to front
+    memcpy(list, item_to_add, item_size);
+    return ESP_OK;
+}
+
+// Convert period in msec to log period
+int8_t msec_to_log_period(uint16_t msec_period) {
+    // logMessagePeriod = log2(interval_seconds)
+    // Clamp between -128 and 127 as per IEEE 1588
+    double log2_value = log2(msec_period / 1e3);
+    // Round to nearest integer
+    int8_t log_period = (int8_t)round(log2_value);
+    // Clamp to valid range
+    if (log_period < -128) return -128;
+    if (log_period > 127) return 127;
+    
+    return log_period;
+}
+
+// Convert log period to period in msec
+uint16_t log_period_to_msec(int8_t log_period) {
+    // interval = 2^logMessagePeriod
+    return (uint16_t)(pow(2.0, log_period) * 1e3);
+}
+
+// Convert scaled to PPM
+double scaled_to_ppm(int32_t scaled_value) {
+    // Convert from 2^41 scaled value to PPM
+    return ((double)scaled_value / pow(2, 41)) * 1e6;  // multiply by 1e6 for PPM
+}
+
+// Convert PPM to scaled
+int32_t ppm_to_scaled(double ppm_value) {
+    // Convert from PPM to 2^41 scaled value
+    return (int32_t)((ppm_value / 1e6) * pow(2, 41));
 }

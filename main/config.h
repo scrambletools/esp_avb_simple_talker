@@ -16,12 +16,16 @@
 #define CONFIG_SERIAL_NUMBER ""
 #define CONFIG_AVB_INTERFACE_NAME "AVB Interface"
 #define CONFIG_STREAM_FORMAT 0x0205021800406000 // uint64_t (AAF, 24/48, 32bit)
-#define CONFIG_GM_CAPABLE true // Will announce GM capability
-#define CONFIG_GM_PDELAY_REQUEST_PERIOD 1000 // Pdelay request period in msec  
-#define CONFIG_GM_ANNOUNCE_PERIOD 3000 // Announce period in msec
-#define CONFIG_GM_SYNC_PERIOD 125 // Sync period in msec
+#define CONFIG_USE_NTP false // Use NTP to set system time
+#define CONFIG_GM_CAPABLE false // Will announce GM capability
+#define CONFIG_PDELAY_REQUEST_PERIOD 1e3 // Pdelay request period in msec  
+#define CONFIG_ANNOUNCE_PERIOD 3e3 // Announce period in msec
+#define CONFIG_SYNC_PERIOD 125 // Sync period in msec
 #define CONFIG_GM_TIMEOUT 3 // Timeout for GM (missing announcements)
-
-#define CONFIG_GM_LIST_SIZE 5 // Number of GMs to keep in list
+#define CONFIG_PDELAY_LIST_SIZE 3 // Number of recent pDelay interactions to keep in list
+#define CONFIG_SYNC_LIST_SIZE 3 // Number of recent sync actions to keep in list
+#define CONFIG_GM_LIST_SIZE 3 // Number of valid GMs to keep in list
+#define CONFIG_ANNOUNCE_LIST_SIZE 3 // Number of recent announce timestamps to keep per GM
+#define CONFIG_PATH_TRACE_LIMIT 5 // Number of path trace IDs to keep in list
 
 #endif /* ESP_AVB_SIMPLE_TALKER_INCLUDE_CONFIG_H_ */

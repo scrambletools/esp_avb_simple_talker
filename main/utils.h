@@ -7,6 +7,7 @@
 #include <lwip/prot/ieee.h>
 #include <arpa/inet.h> // ntohs
 #include <string.h>
+#include <math.h>
 
 #define AVTP_MAX_PAYLOAD_LENGTH 1486
 #define PRINT_SUMMARY 0
@@ -104,9 +105,7 @@ typedef struct {
 const char* get_ethertype_name(ethertype_t ethertype);
 const char* get_frame_type_name(avb_frame_type_t type);
 uint64_t octets_to_uint(const uint8_t *buffer, size_t size);
-uint64_t octets_to_uint64(const uint8_t *buffer, size_t size);
-uint32_t octets_to_uint32(const uint8_t *buffer, size_t size);
-uint16_t octets_to_uint16(const uint8_t *buffer, size_t size);
+void octets_to_timeval(const uint8_t *buffer, struct timeval *tv);
 void reverse_octets(uint8_t *buffer, size_t size);
 void octets_to_binary_string(const uint8_t *buffer, size_t size, char *bit_string);
 void int_to_octets(void *value, uint8_t *buffer, size_t size);
@@ -124,5 +123,10 @@ void timeval_add(struct timeval *result, struct timeval *a, struct timeval *b);
 void timeval_subtract(struct timeval *result, struct timeval *a, struct timeval *b);
 struct timeval timeval_divide_by_int(struct timeval tv, int divisor);
 int compare_timeval(struct timeval t1, struct timeval t2);
+esp_err_t add_to_list_front(void *item_to_add, void *list, size_t item_size, size_t list_size);
+int8_t msec_to_log_period(uint16_t msec_period);
+uint16_t log_period_to_msec(int8_t log_period);
+double scaled_to_ppm(int32_t scaled_value);
+int32_t ppm_to_scaled(double ppm_value);
 
 #endif /* ESP_AVB_SIMPLE_TALKER_INCLUDE_UTILS_H_ */

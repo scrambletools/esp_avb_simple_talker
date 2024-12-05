@@ -7,48 +7,35 @@ static const char *TAG = "GPTP";
 static gptp_state_info_t gptp_state = {
     .gm_is_present = false, // a gm is present (local or remote)
     .gm_is_local = false, // local host is currently gm
-    .time_is_set = false, // time has been set (by NTP or other GM)
-    .pdelay_request_sequence_id = 0 // initialize to 0
+    .mean_offset = 0, // Initialize to 0
+    .mean_pdelay = 0, // Initialize to 0
+    .mean_rate_ratio = 1.0, // Initialize to 1.0
+    .mean_freq_change = 0.0 // Initialize to 0.0
 };
 
 // GM list (in order of BMCA criteria; first is best and current)
 // Initial GM with default information (used for local GM if no GM is present)
-static gptp_gm_info_t gm_list[CONFIG_GM_LIST_SIZE] ={{
-    .port_id = CONFIG_PORT_ID,
+static gptp_gm_info_t gm_list[CONFIG_GM_LIST_SIZE] = {{
     .priority_1 = 246,
     .clock_class = 248,
-    .clock_accuracy = 0xfe,
+    .clock_accuracy = 0xfe, // accuracy unknown
     .clock_variance = 1,
     .priority_2 = 248,
-    .clock_id = CONFIG_CLOCK_ID,
-    .steps_removed = 0,
-    .time_source = 0xa0,
-    .last_announce = { 0 },
-    .announce_period = CONFIG_GM_ANNOUNCE_PERIOD, // replaced with observed value
-    .announce_sequence_id = 0, // initialize to 0 
-    .sync_period = CONFIG_GM_SYNC_PERIOD, // replaced with observed value
-    .sync_sequence_id = 0 // initialize to 0
+    .clock_id = CONFIG_CLOCK_ID, // initialize to local clock id
+    .steps_removed = 0, // initialize to 0 (no steps removed)
+    .time_source = 0xa0, // internal oscillator
+    .port_id = CONFIG_PORT_ID,
+    .announce_sequence_id = 0, // initialize to 0
+    .announce_period = CONFIG_ANNOUNCE_PERIOD, // initialize to config default
+    .timestamp_announce = {{ 0 }},
+    .path_trace_ids = {{ CONFIG_CLOCK_ID }} // initialize to local clock id only
 }};
 
-// Current peer delay information
-static gptp_pdelay_info_t current_pdelay = {
-	.sequence_id = 0,
-	.timestamp_request_transmission = { 0 },
-	.timestamp_request_receipt = { 0 },
-	.timestamp_response_transmission = { 0 },
-	.timestamp_response_receipt = { 0 },
-	.calculated_pdelay = 0
-};
+// pDelay list (in descending order of sequence id)
+static gptp_pdelay_info_t pdelay_list[CONFIG_PDELAY_LIST_SIZE] = {};
 
-// Current time offset information
-static gptp_offset_info_t current_offset = {
-	.sequence_id = 0,
-	.timestamp_sync_transmission = { 0 },
-	.timestamp_sync_receipt = { 0 },
-	.timestamp_request_transmission = { 0 },
-	.timestamp_request_receipt = { 0 },
-	.calculated_offset = 0
-};
+// sync list (in descending order of sequence id)
+static gptp_sync_info_t sync_list[CONFIG_SYNC_LIST_SIZE] = {};
 
 ////////////
 // gPTP messages
@@ -210,12 +197,12 @@ gptp_gm_info_t* get_current_gm(void) {
 
 // Gets the pointer to the current_pdelay variable
 gptp_pdelay_info_t* get_current_pdelay(void) {
-    return &current_pdelay;
+    return &pdelay_list[0];
 }
 
 // Gets the pointer to the current_offset variable
-gptp_offset_info_t* get_current_offset(void) {
-    return &current_offset;
+gptp_sync_info_t* get_current_sync(void) {
+    return &sync_list[0];
 }
 
 // Gets the pointer to the gm_list variable
@@ -223,22 +210,46 @@ gptp_gm_info_t* get_gm_list(void) {
     return gm_list;
 }
 
+// Gets the pointer to the pdelay_list variable
+gptp_pdelay_info_t* get_pdelay_list(void) {
+    return pdelay_list;
+}
+
+// Gets the pointer to the sync_list variable
+gptp_sync_info_t* get_sync_list(void) {
+    return sync_list;
+}
+
 // Add a GM to the GM list in order of BMCA criteria
-esp_err_t add_to_gm_list(gptp_gm_info_t *gm_to_add) {
+int add_to_gm_list(gptp_gm_info_t *gm_to_add) {
     if (gm_to_add == NULL) {
-        return ESP_ERR_INVALID_ARG;
+        return -1; // Return -1 for invalid argument
     }
     // Compare to each GM in the list using BMCA criteria
     for (int i = 0; i < CONFIG_GM_LIST_SIZE; i++) {
-        // If the new GM is better than the current GM or if it's the last GM in the list
-        if (evaluate_bmca(gm_to_add, &gm_list[i]) || (i == CONFIG_GM_LIST_SIZE - 1)) {
+        // If the new GM is better than the GM at index i
+        if (evaluate_bmca(gm_to_add, &gm_list[i])) {
             // Insert GM into this slot
             memmove(&gm_list[i + 1], &gm_list[i], sizeof(gptp_gm_info_t) * (CONFIG_GM_LIST_SIZE - i - 1));
             gm_list[i] = *gm_to_add;
-            break;
+            return i; // Return the index of the new GM
         }
     }
-    return ESP_OK;
+    return -1; // Return -1 if the new GM is not added to the list
+}
+
+// Add a pDelay to the front of pDelay list
+esp_err_t add_to_pdelay_list(gptp_pdelay_info_t *pdelay_to_add) {
+    return add_to_list_front(pdelay_to_add, pdelay_list,
+                            sizeof(gptp_pdelay_info_t),
+                            CONFIG_PDELAY_LIST_SIZE);
+}
+
+// Add a sync to the front of sync list
+esp_err_t add_to_sync_list(gptp_sync_info_t *sync_to_add) {
+    return add_to_list_front(sync_to_add, sync_list,
+                            sizeof(gptp_sync_info_t),
+                            CONFIG_SYNC_LIST_SIZE);
 }
 
 // Remove a GM from the GM list
@@ -254,10 +265,50 @@ esp_err_t remove_from_gm_list(gptp_gm_info_t *gm_to_remove) {
     return ESP_OK;
 }
 
+// Remove an item from the pDelay list
+esp_err_t remove_from_pdelay_list(gptp_pdelay_info_t *pdelay_to_remove) {
+    int pdelay_index = find_pdelay_index(pdelay_to_remove->sequence_id);
+    if (pdelay_index == -1) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    memmove(&pdelay_list[pdelay_index], &pdelay_list[pdelay_index + 1], sizeof(gptp_pdelay_info_t) * (CONFIG_PDELAY_LIST_SIZE - pdelay_index - 1));
+    return ESP_OK;
+}
+
+// Remove an item from the sync list
+esp_err_t remove_from_sync_list(gptp_sync_info_t *sync_to_remove) {
+    int sync_index = find_sync_index(sync_to_remove->sequence_id);
+    if (sync_index == -1) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    memmove(&sync_list[sync_index], &sync_list[sync_index + 1], sizeof(gptp_sync_info_t) * (CONFIG_SYNC_LIST_SIZE - sync_index - 1));
+    return ESP_OK;
+}
+
 // Find the index of a GM in the GM list using its clock_id
 int find_gm_index(uint64_t clock_id) {
     for (int i = 0; i < CONFIG_GM_LIST_SIZE; i++) {
         if (gm_list[i].clock_id == clock_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Find the index of an item in the pDelay list using its sequence_id
+int find_pdelay_index(uint16_t sequence_id) {
+    for (size_t i = 0; i < CONFIG_PDELAY_LIST_SIZE; i++) {
+        if (pdelay_list[i].sequence_id == sequence_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Find the index of an item in the sync list using its sequence_id
+int find_sync_index(uint16_t sequence_id) {
+    for (size_t i = 0; i < CONFIG_SYNC_LIST_SIZE; i++) {
+        if (sync_list[i].sequence_id == sequence_id) {
             return i;
         }
     }
@@ -333,17 +384,17 @@ uint64_t calculate_pdelay(gptp_pdelay_info_t *pdelay_info) {
         pdelay_info->timestamp_response_transmission.tv_sec, pdelay_info->timestamp_response_transmission.tv_usec,
         calculated_delay.tv_sec, calculated_delay.tv_usec
     );
-    ESP_LOGI(TAG, "Calc pdelay: %s", data_message);
+    //ESP_LOGI(TAG, "Calc pdelay: %s", data_message);
     return result;
 }
 
 // Calculate the offset: ((sync_r - sync_t) - (req_r - req_t)) / 2
-uint64_t calculate_offset(gptp_offset_info_t *offset_info) {
+uint64_t calculate_offset(gptp_sync_info_t *sync_info, gptp_pdelay_info_t *pdelay_info) {
     struct timeval sync_delay;
     struct timeval request_delay;
     struct timeval calculated_offset;
-    timeval_subtract(&sync_delay, &offset_info->timestamp_sync_receipt, &offset_info->timestamp_sync_transmission);
-    timeval_subtract(&request_delay, &offset_info->timestamp_request_receipt, &offset_info->timestamp_request_transmission);
+    timeval_subtract(&sync_delay, &sync_info->timestamp_sync_receipt, &sync_info->timestamp_sync_transmission);
+    timeval_subtract(&request_delay, &pdelay_info->timestamp_request_receipt, &pdelay_info->timestamp_request_transmission);
     timeval_subtract(&calculated_offset, &sync_delay, &request_delay);
     calculated_offset = timeval_divide_by_int(calculated_offset, 2);
     uint64_t result = calculated_offset.tv_sec * 1000000000 + calculated_offset.tv_usec * 1000;
@@ -380,12 +431,12 @@ void append_gptpdu(avb_frame_type_t type, eth_frame_t *frame) {
             break;
         default:
             ESP_LOGE(TAG, "Can't create %s, not supported yet.", get_frame_type_name(type));
-        // Overwrite with general gPTP config values
-        uint64_t clock_id = CONFIG_CLOCK_ID;
-        int_to_octets(&clock_id, frame->payload + 20, 8);
-        uint16_t source_port_id = CONFIG_PORT_ID;
-        int_to_octets(&source_port_id, frame->payload + 28, 2);
     }
+    // Overwrite with general gPTP config values
+    uint64_t clock_id = CONFIG_CLOCK_ID;
+    int_to_octets(&clock_id, frame->payload + 20, 8);
+    uint16_t source_port_id = CONFIG_PORT_ID;
+    int_to_octets(&source_port_id, frame->payload + 28, 2);
 }
 
 // Detect which kind of gPTP frame it is; assumes Ethertype is PTP

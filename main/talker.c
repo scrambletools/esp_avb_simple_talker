@@ -31,7 +31,10 @@ static void gptp_task(void *pvParameters) {
     gptp_state_info_t *gptp_state = get_gptp_state();
     gptp_gm_info_t *current_gm = get_current_gm();
     gptp_pdelay_info_t *current_pdelay = get_current_pdelay();
-    gptp_offset_info_t *current_offset = get_current_offset();
+    gptp_sync_info_t *current_sync = get_current_sync();
+    gptp_gm_info_t *gm_list = get_gm_list();
+    gptp_pdelay_info_t *pdelay_list = get_pdelay_list();
+    gptp_sync_info_t *sync_list = get_sync_list();
 
     // Message for rx queue
     struct queue_message_t *p_message_for_gptp_task;
@@ -58,7 +61,7 @@ static void gptp_task(void *pvParameters) {
     };
     esp_timer_handle_t pdelay_request_timer;
     ESP_ERROR_CHECK(esp_timer_create(&pdelay_request_timer_args, &pdelay_request_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(pdelay_request_timer, CONFIG_GM_PDELAY_REQUEST_PERIOD * 1000));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(pdelay_request_timer, CONFIG_PDELAY_REQUEST_PERIOD * 1e3));
 
     // If GM capable then setup timers for local gm checks, 
     // as well as sending announce, sync and follow up messages
@@ -72,7 +75,7 @@ static void gptp_task(void *pvParameters) {
         esp_timer_handle_t local_gm_timer;
         int local_gm_check_period = CONFIG_GM_TIMEOUT * current_gm->announce_period;
         ESP_ERROR_CHECK(esp_timer_create(&local_gm_timer_args, &local_gm_timer));
-        ESP_ERROR_CHECK(esp_timer_start_periodic(local_gm_timer, local_gm_check_period * 1000));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(local_gm_timer, local_gm_check_period * 1e3));
 
         // Create a timer for announce messages
         const esp_timer_create_args_t announce_timer_args = {
@@ -81,7 +84,7 @@ static void gptp_task(void *pvParameters) {
         };
         esp_timer_handle_t announce_timer;
         ESP_ERROR_CHECK(esp_timer_create(&announce_timer_args, &announce_timer));
-        ESP_ERROR_CHECK(esp_timer_start_periodic(announce_timer, CONFIG_GM_ANNOUNCE_PERIOD * 1000));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(announce_timer, CONFIG_ANNOUNCE_PERIOD * 1e3));
 
         // Create a timer for sync messages
         const esp_timer_create_args_t sync_timer_args = {
@@ -90,7 +93,7 @@ static void gptp_task(void *pvParameters) {
         };
         esp_timer_handle_t sync_timer;
         ESP_ERROR_CHECK(esp_timer_create(&sync_timer_args, &sync_timer));
-        ESP_ERROR_CHECK(esp_timer_start_periodic(sync_timer, CONFIG_GM_SYNC_PERIOD * 1000));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(sync_timer, CONFIG_SYNC_PERIOD * 1e3));
     }
 
     // Listen loop
@@ -114,22 +117,24 @@ static void gptp_task(void *pvParameters) {
         }
 
         // Log all received frames
-        //print_frame(&frame, PRINT_SUMMARY);
+        print_frame(&frame, PRINT_SUMMARY);
 
         // Handle each type of frame that needs action
         switch(frame.frame_type) {
             case avb_frame_gptp_pdelay_request:
-                print_frame(&frame, PRINT_SUMMARY);
+                //print_frame(&frame, PRINT_SUMMARY);
                 send_gptp_pdelay_response(&frame);
                 break;
             case avb_frame_gptp_pdelay_response:
                 //print_frame(&frame, PRINT_SUMMARY);
-                // Check if the sequence_id >= last request sent from local
-                if (octets_to_uint(frame.payload + 30, 2) >= gptp_state->pdelay_request_sequence_id) {
+                // Check if the sequence_id = last request sent from local
+                if (octets_to_uint(frame.payload + 30, 2) == current_pdelay->sequence_id) {
+
                     // Save the requeset receipt timestamp from the response frame
                     current_pdelay->timestamp_request_receipt.tv_sec = octets_to_uint(frame.payload + 34, 6);
                     current_pdelay->timestamp_request_receipt.tv_usec = (int)(octets_to_uint(frame.payload + 40, 4) / 1000);
-                    // Save the pdelay response receipt timestamp from the response frame
+                    
+                    // Save the pdelay response receipt timestamp to current_pdelay
                     current_pdelay->timestamp_response_receipt.tv_sec = frame.time_received.tv_sec;
                     current_pdelay->timestamp_response_receipt.tv_usec = frame.time_received.tv_usec;
                 }
@@ -137,32 +142,136 @@ static void gptp_task(void *pvParameters) {
                 break;
             case avb_frame_gptp_pdelay_response_follow_up:
                 //print_frame(&frame, PRINT_SUMMARY);
-                // Check if the sequence_id >= last request sent from local
-                if (octets_to_uint(frame.payload + 30, 2) >= gptp_state->pdelay_request_sequence_id) {
-                    // Save the response origin timestamp from the response frame
-                    current_pdelay->timestamp_response_transmission .tv_sec = octets_to_uint(frame.payload + 34, 6);
-                    current_pdelay->timestamp_response_transmission.tv_usec = (int)(octets_to_uint(frame.payload + 40, 4) / 1000);
-                    // Calculate the peer delay and save it
-                    uint64_t peer_delay = calculate_pdelay(current_pdelay);
-                    current_pdelay->calculated_pdelay = peer_delay;
+                // Check if the sequence_id = last request sent from local
+                if (octets_to_uint(frame.payload + 30, 2) == current_pdelay->sequence_id) {
+
+                    // Save the response origin timestamp to current_pdelay
+                    octets_to_timeval(frame.payload + 34, &current_pdelay->timestamp_response_transmission);
+                    
+                    // Calculate the peer delay and save it to current_pdelay
+                    current_pdelay->calculated_pdelay = calculate_pdelay(current_pdelay);
                 }
                 // If not, then discard the response follow up
                 break;
             case avb_frame_gptp_announce:
                 //print_frame(&frame, PRINT_SUMMARY);
                 // Check if the announce message is for same GM as current GM, if so do nothing
-                // If different GM, then evaluate BMCA and update current GM info if needed
+                if (octets_to_uint(frame.payload + 53, 8) == current_gm->clock_id) {
+                    ESP_LOGI(TAG, "Announce message is for same GM as current GM.");
+                }
+                else {
+                    // Extract the GM info from the announce message into a new GM struct
+                    gptp_gm_info_t new_gm;
+                    new_gm.clock_id = octets_to_uint(frame.payload + 53, 8);
+                    new_gm.priority_1 = octets_to_uint(frame.payload + 47, 1);
+                    new_gm.clock_class = octets_to_uint(frame.payload + 48, 1);
+                    new_gm.clock_accuracy = octets_to_uint(frame.payload + 49, 1);
+                    new_gm.clock_variance = octets_to_uint(frame.payload + 50, 2);
+                    new_gm.priority_2 = octets_to_uint(frame.payload + 52, 1);
+                    new_gm.steps_removed = octets_to_uint(frame.payload + 61, 2);
+                    new_gm.time_source = octets_to_uint(frame.payload + 63, 1);
+                    new_gm.port_id = octets_to_uint(frame.payload + 56, 2);
+
+                    // Insert the sequence id
+                    new_gm.announce_sequence_id = octets_to_uint(frame.payload + 30, 2);
+                    
+                    // Insert the announce period
+                    new_gm.announce_period = log_period_to_msec(octets_to_uint(frame.payload + 33, 1));
+
+                    // Insert the announce timestamp into the first slot of the timestamp_announce array
+                    add_to_list_front(&frame.time_received, 
+                                        &new_gm.timestamp_announce, 
+                                        sizeof(struct timeval), 
+                                        CONFIG_ANNOUNCE_LIST_SIZE
+                    );
+
+                    // Insert the path trace IDs
+                    for (int i = 0; i <= new_gm.steps_removed; i++) {
+
+                        // Dont go over the limit of the path trace IDs array
+                        if (i >= CONFIG_PATH_TRACE_LIMIT) { break; }
+                        new_gm.path_trace_ids[i] = octets_to_uint(frame.payload + 68 + (i * 8), 8);
+                    }
+                    // Add the new GM to the GM list
+                    int index = add_to_gm_list(&new_gm);
+                    if (index != -1) {
+                        ESP_LOGI(TAG, "Announce message is from a better GM than current GM!");
+                        if (index == 0) {
+
+                            // New best GM is now current GM
+                            ESP_LOGI(TAG, "Newly announcedGM is now current GM!");
+
+                            // Reset sync list
+                            *sync_list = (gptp_sync_info_t){0};
+                        }
+                    }
+                }
                 break;
             case avb_frame_gptp_sync:
                 //print_frame(&frame, PRINT_SUMMARY);
-                // Check if the sync message is for same GM as current GM, if so then update sync_sequence_id
-                // If different GM, then discard the sync message
+                // Check if the sync message is from current GM
+                if (octets_to_uint(frame.payload + 20, 8) == current_gm->clock_id) {
+                    ESP_LOGI(TAG, "Sync message is from current GM.");
+                    // If the sequence id is greater than the current sync sequence id
+                    if (octets_to_uint(frame.payload + 30, 2) > current_sync->sequence_id) {
+
+                        // Create a new sync info struct
+                        gptp_sync_info_t new_sync;
+                        // Insert the sync sequence id
+                        new_sync.sequence_id = octets_to_uint(frame.payload + 30, 2);
+                        // Insert the sync period
+                        new_sync.period = log_period_to_msec(octets_to_uint(frame.payload + 33, 1));
+                        // Insert the sync receipt timestamp
+                        new_sync.timestamp_sync_receipt.tv_sec = frame.time_received.tv_sec;
+                        new_sync.timestamp_sync_receipt.tv_usec = frame.time_received.tv_usec;
+                        // Add the new sync info to the sync list
+                        int result = add_to_sync_list(&new_sync);
+                        if (result != -1) {
+                            ESP_LOGI(TAG, "Could not add sync message to sync list.");
+                            break;
+                        }
+                        ESP_LOGI(TAG, "New sync info (%d) added to sync list.", new_sync.sequence_id);
+                    }
+                }
+                else {
+                    ESP_LOGI(TAG, "Sync message is not from current GM, will ignore.");
+                }
                 break;
             case avb_frame_gptp_follow_up:
                 //print_frame(&frame, PRINT_SUMMARY);
-                // Check if the follow up message is for same GM as current GM
-                // if so then update current_offset and adjust internal clock
-                // If different GM, then discard the follow up message
+                // If the sync message is from current GM
+                if (octets_to_uint(frame.payload + 20, 8) == current_gm->clock_id) {
+
+                    ESP_LOGI(TAG, "Follow up message is from current GM.");
+                    // If the sequence id is greater than the current sync sequence id
+                    if (octets_to_uint(frame.payload + 30, 2) == current_sync->sequence_id) {
+
+                        // Insert the sync transmission timestamp into current_sync
+                        octets_to_timeval(frame.payload + 34, &current_sync->timestamp_sync_transmission);
+
+                        // Insert the scaled rate offset and scaled freq change
+                        current_sync->scaled_rate_offset = scaled_to_ppm(octets_to_uint(frame.payload + 54, 4));
+                        current_sync->scaled_freq_change = scaled_to_ppm(octets_to_uint(frame.payload + 72, 4));
+
+                        // Calculate the offset and insert it into current_sync
+                        current_sync->calculated_offset = calculate_offset(current_sync, current_pdelay);
+                        ESP_LOGI(TAG, "Calculated offset: %lld ns", current_sync->calculated_offset);
+
+                        // Calculate new mean offset from sync list and save it to gptp state
+                        uint64_t new_mean_offset = 0;
+                        size_t count = 0;
+                        for (int i = 0; i < CONFIG_SYNC_LIST_SIZE; i++) {
+                            if (sync_list[i].sequence_id == 0) { break; } // ignore empty slots
+                            new_mean_offset += sync_list[i].calculated_offset;
+                            count++;
+                        }
+                        gptp_state->mean_offset = new_mean_offset / count;
+                        ESP_LOGI(TAG, "New mean offset: %lld ns", gptp_state->mean_offset);
+                    }
+                }
+                else {
+                    ESP_LOGI(TAG, "Follow up message is not from current GM, will ignore.");
+                }
                 break;
             default:
         }
@@ -194,45 +303,53 @@ static void check_local_gm() {
         gettimeofday(&timeout_time, NULL);
         gptp_gm_info_t *current_gm = get_current_gm();
         // Set timeout time to GM_TIMEOUT * GM's announce period (rounded down to whole seconds)
-        timeout_time.tv_sec -= CONFIG_GM_TIMEOUT * (int)(current_gm->announce_period / 1000);
+        timeout_time.tv_sec -= CONFIG_GM_TIMEOUT * (int)(current_gm->announce_period / 1e3);
         // If current GM timed out
-        if (compare_timeval(current_gm->last_announce, timeout_time) < 0) {
+        if (compare_timeval(current_gm->timestamp_announce[0], timeout_time) < 0) {
             // Remove it from the list of GMs; and next best GM becomes current GM at gm_list[0]
             esp_err_t err = remove_from_gm_list(current_gm);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to remove GM from list.");
+                ESP_LOGE(TAG, "GM timeout, but failed to remove GM from list.");
             }
-            // Get new current GM and reset state values
+            else {
+                ESP_LOGI(TAG, "Dropped current GM due to timeout.");
+            }
+            // Get new current GM, reset sequence id, timestamp_announce list
             current_gm = get_current_gm();
-            gettimeofday(&current_gm->last_announce, NULL);
-            current_gm->announce_period = CONFIG_GM_ANNOUNCE_PERIOD;
             current_gm->announce_sequence_id = 0;
-            current_gm->sync_period = CONFIG_GM_SYNC_PERIOD;
-            current_gm->sync_sequence_id = 0;
+            memset(&current_gm->timestamp_announce, 0, sizeof(current_gm->timestamp_announce));
+            gettimeofday(&current_gm->timestamp_announce[0], NULL);
+            // Reset sync list
+            gptp_sync_info_t *sync_list = get_sync_list();
+            *sync_list = (gptp_sync_info_t){0};
+            ESP_LOGI(TAG, "GM is now %lld", current_gm->clock_id);
 
             // If new current GM is the local clock, then set GM is local
             if (current_gm->clock_id == CONFIG_CLOCK_ID) {
                 gptp_state->gm_is_local = true;
+                ESP_LOGI(TAG, "GM fell back to local clock.");
             }
         }
     }
     // If GM is not present and not local (startup case)
     else {
-        // Local clock is already set to gm_list[0] by default
-        // So just reset the GM last_announce time and the gPTP state variables
-        gettimeofday(&current_gm->last_announce, NULL);
-        gptp_state->gm_is_present = true;
-        gptp_state->gm_is_local = true;
+        if (CONFIG_GM_CAPABLE) {
+            // Local clock is already set to current_gm (gm_list[0]) by default
+            // So just add an announce timestamp to gm_list[0] and set the gPTP state variables
+            gettimeofday(&current_gm->timestamp_announce[0], NULL);
+            gptp_state->gm_is_present = true;
+            gptp_state->gm_is_local = true;
+            ESP_LOGI(TAG, "Local clock is now current GM.");
+        }
     }
 }
 
 // Send gPTP peer delay request message
 static void send_gptp_pdelay_request(void* arg) {
 
-    // Increment the sequence id from gPTP state
-    gptp_state_info_t *gptp_state = get_gptp_state();
-    if (gptp_state->pdelay_request_sequence_id == 0xFFFF) { gptp_state->pdelay_request_sequence_id = 1; }
-    else { gptp_state->pdelay_request_sequence_id += 1; }
+    // Get the needed variables
+    gptp_pdelay_info_t *pdelay_list = get_pdelay_list();
+    gptp_pdelay_info_t *current_pdelay = get_current_pdelay();
 
     // Create a new frame, set the header and append the request message
     eth_frame_t frame;
@@ -240,17 +357,27 @@ static void send_gptp_pdelay_request(void* arg) {
     frame.frame_type = avb_frame_gptp_pdelay_request;
     append_gptpdu(frame.frame_type, &frame);
 
-    // Insert the sequence_id
-    int_to_octets(&gptp_state->pdelay_request_sequence_id, frame.payload + 30, 2);
+    // Increment the sequence_id and insert it into the frame
+    uint16_t request_sequence_id = current_pdelay->sequence_id;
+    if (request_sequence_id == 0xFFFF) { request_sequence_id = 1; }
+    else { request_sequence_id += 1; }
+    int_to_octets(&request_sequence_id, frame.payload + 30, 2);
 
     // Send response
     send_frame(&frame);
-    print_frame(&frame, PRINT_SUMMARY);
+    //print_frame(&frame, PRINT_SUMMARY);
+
+    // Create a new pdelay info struct
+    gptp_pdelay_info_t new_pdelay;
+    new_pdelay.sequence_id = request_sequence_id;
+    new_pdelay.period = CONFIG_PDELAY_REQUEST_PERIOD; // Set to default period
 
     // Save the request sent timestamp from the frame that was just sent
-    gptp_pdelay_info_t *current_pdelay = get_current_pdelay();
-    current_pdelay->timestamp_request_transmission.tv_sec = frame.time_sent.tv_sec;
-    current_pdelay->timestamp_request_transmission.tv_usec = frame.time_sent.tv_usec;
+    new_pdelay.timestamp_request_transmission.tv_sec = frame.time_sent.tv_sec;
+    new_pdelay.timestamp_request_transmission.tv_usec = frame.time_sent.tv_usec;
+
+    // Add the new pdelay info to the pdelay list
+    add_to_pdelay_list(&new_pdelay);
 }
 
 // Send gPTP peer delay response and follow up messages
@@ -264,24 +391,21 @@ static void send_gptp_pdelay_response(eth_frame_t * req_frame) {
 
     // -- Process response based on request frame data --
 
-    // Insert the sequence_id from the request frame
+    // Insert the sequence_id from the request frame    
     memcpy(frame.payload + 30, req_frame->payload + 30, (2));
 
     // Insert the requeset_receipt_timestamp from the request time of receipt
-    uint8_t timestamp_sec[6] = {};
-    uint8_t timestamp_nsec[4] = {};
-    timeval_to_octets(&req_frame->time_received, timestamp_sec, timestamp_nsec);
-    memcpy(frame.payload + 34, &timestamp_sec, (6)); // requestReceiptTimestamp(sec)
-    memcpy(frame.payload + 40, &timestamp_nsec, (4)); // requestReceiptTimestamp(nanosec)
+    timeval_to_octets(&req_frame->time_received, frame.payload + 34, frame.payload + 40);
 
     // Insert the requesting_source_port_identity from the request frame clock_identity
     memcpy(frame.payload + 44, req_frame->payload + 20, (8));
+
     // Insert the requesting_source_port_id from the request frame source_port_id
     memcpy(frame.payload + 52, req_frame->payload + 28, (2));
 
     // Send response
     send_frame(&frame);
-    print_frame(&frame, PRINT_SUMMARY);
+    //print_frame(&frame, PRINT_SUMMARY);
 
     // --- Process response follow up based on request and response frame data ---
     
@@ -299,55 +423,113 @@ static void send_gptp_pdelay_response(eth_frame_t * req_frame) {
     
     // Send response follow up
     send_frame(&frame);
-    print_frame(&frame, PRINT_SUMMARY);
+    //print_frame(&frame, PRINT_SUMMARY);
 }
 
 // Send gPTP announce message (if GM is local)
 static void send_gptp_announce(void* arg) {
 
-    // Increment the sequence id from current GM
-    gptp_gm_info_t *current_gm = get_current_gm();
-    if (current_gm->announce_sequence_id == 0xFFFF) { current_gm->announce_sequence_id = 1; }
-    else { current_gm->announce_sequence_id += 1; }
+    // If GM is present and local
+    gptp_state_info_t *gptp_state = get_gptp_state();
+    if (gptp_state->gm_is_present && gptp_state->gm_is_local) {
 
-    // Create a new frame, set the header and append the announce message
-    eth_frame_t frame;
-    set_frame_header(lldp_mcast_mac_addr, ethertype_gptp, &frame);
-    frame.frame_type = avb_frame_gptp_announce;
-    append_gptpdu(frame.frame_type, &frame);
+        // Create a new frame, set the header and append the announce message
+        eth_frame_t frame;
+        set_frame_header(lldp_mcast_mac_addr, ethertype_gptp, &frame);
+        frame.frame_type = avb_frame_gptp_announce;
+        append_gptpdu(frame.frame_type, &frame);
 
-    // Insert the sequence_id
-    int_to_octets(&current_gm->announce_sequence_id, frame.payload + 30, 2);
+        // Increment the sequence_id and insert it into the frame
+        gptp_gm_info_t *current_gm = get_current_gm();
+        if (current_gm->announce_sequence_id == 0xFFFF) { current_gm->announce_sequence_id = 1; }
+        else { current_gm->announce_sequence_id += 1; }
+        int_to_octets(&current_gm->announce_sequence_id, frame.payload + 30, 2);
 
-    // Insert the local gm info
-    int_to_octets(&current_gm->priority_1, frame.payload + 47, 1);
-    int_to_octets(&current_gm->clock_class, frame.payload + 48, 1);
-    int_to_octets(&current_gm->clock_accuracy, frame.payload + 49, 1);
-    int_to_octets(&current_gm->clock_variance, frame.payload + 50, 2);
-    int_to_octets(&current_gm->priority_2, frame.payload + 52, 1);
-    int_to_octets(&current_gm->clock_id, frame.payload + 53, 8);
-    int_to_octets(&current_gm->steps_removed, frame.payload + 61, 2);
-    int_to_octets(&current_gm->time_source, frame.payload + 63, 1);
-    int_to_octets(&current_gm->clock_id, frame.payload + 68, 8); // pathTraceTlv(pathSequence)
+        // Insert the log_period
+        int8_t log_period = msec_to_log_period(current_gm->announce_period);
+        int_to_octets(&log_period, frame.payload + 33, 1);
 
-    // Send the announce message
-    //send_frame(&frame);
-    //print_frame(&frame, PRINT_VERBOSE);
+        // Insert the local gm info
+        int_to_octets(&current_gm->priority_1, frame.payload + 47, 1);
+        int_to_octets(&current_gm->clock_class, frame.payload + 48, 1);
+        int_to_octets(&current_gm->clock_accuracy, frame.payload + 49, 1);
+        int_to_octets(&current_gm->clock_variance, frame.payload + 50, 2);
+        int_to_octets(&current_gm->priority_2, frame.payload + 52, 1);
+        int_to_octets(&current_gm->clock_id, frame.payload + 53, 8);
+        int_to_octets(&current_gm->steps_removed, frame.payload + 61, 2);
+        int_to_octets(&current_gm->time_source, frame.payload + 63, 1);
+        int_to_octets(&current_gm->clock_id, frame.payload + 68, 8); // pathTraceTlv(pathSequence)
+
+        // Send the announce message
+        send_frame(&frame);
+        print_frame(&frame, PRINT_SUMMARY);
+    }
 }
 
 // Send gPTP sync message
 static void send_gptp_sync(void* arg) {
 
-    // If GM is present, local, and time is set  
+    // If GM is present and local
     gptp_state_info_t *gptp_state = get_gptp_state();
-    if (gptp_state->gm_is_present && gptp_state->gm_is_local && gptp_state->time_is_set) {
+    if (gptp_state->gm_is_present && gptp_state->gm_is_local) {
 
-        // Increment the sequence id from current GM
-        gptp_gm_info_t *current_gm = get_current_gm();
-        if (current_gm->sync_sequence_id == 0xFFFF) { current_gm->sync_sequence_id = 1; }
-        else { current_gm->sync_sequence_id += 1; }
+        // Get the sync list
+        gptp_sync_info_t *sync_list = get_sync_list();
+        gptp_sync_info_t *current_sync = get_current_sync();
 
-        // Setup and send the sync message, and follow up message
+        // --- Process sync message ---
+
+        // Create a new frame, set the header and append the sync template
+        eth_frame_t frame;
+        set_frame_header(lldp_mcast_mac_addr, ethertype_gptp, &frame);
+        frame.frame_type = avb_frame_gptp_sync;
+        append_gptpdu(frame.frame_type, &frame);
+
+        // Increment the sequence_id and insert into the frame
+        // Don't change current_sync->sequence_id as that is now old
+        uint16_t sync_sequence_id = current_sync->sequence_id;
+        if (sync_sequence_id == 0xFFFF) { sync_sequence_id = 1; }
+        else { sync_sequence_id += 1; }
+        int_to_octets(&sync_sequence_id, frame.payload + 30, 2);
+
+        // Insert the sync period
+        int8_t log_period = msec_to_log_period(CONFIG_SYNC_PERIOD);
+        int_to_octets(&log_period, frame.payload + 33, 1);
+
+        // Send the sync message
+        send_frame(&frame);
+        print_frame(&frame, PRINT_SUMMARY);
+
+        // Create a new sync and add it to the sync list
+        gptp_sync_info_t new_sync;
+        new_sync.sequence_id = sync_sequence_id;
+
+        new_sync.timestamp_sync_transmission.tv_sec = frame.time_sent.tv_sec;
+        new_sync.timestamp_sync_transmission.tv_usec = frame.time_sent.tv_usec;
+        add_to_sync_list(&new_sync);
+
+        // --- Process follow up using current sync data ---
+
+        // Reuse the frame; change payload to follow up message
+        frame.frame_type = avb_frame_gptp_follow_up;
+        append_gptpdu(frame.frame_type, &frame);
+
+        // Re-insert the sequence_id, log_period
+        int_to_octets(&sync_sequence_id, frame.payload + 30, 2);
+        int_to_octets(&log_period, frame.payload + 33, 1);
+
+        // Insert the transmission timestamp from the sync message that was just sent
+        timeval_to_octets(&frame.time_sent, frame.payload + 34, frame.payload + 40);
+
+        // Insert the organization extension tlv data
+        int32_t scaled_rate_offset = ppm_to_scaled(gptp_state->mean_rate_ratio);
+        int_to_octets(&scaled_rate_offset, frame.payload + 54, 4);
+        int32_t scaled_freq_change = ppm_to_scaled(gptp_state->mean_freq_change);
+        int_to_octets(&scaled_freq_change, frame.payload + 74, 4);
+
+        // Send the follow up message
+        send_frame(&frame);
+        print_frame(&frame, PRINT_SUMMARY);
     }
 }
 
