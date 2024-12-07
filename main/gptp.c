@@ -366,23 +366,24 @@ bool evaluate_bmca(gptp_gm_info_t *gm_a, gptp_gm_info_t *gm_b) {
     return false;
 }
 
-// Calculate the peer delay: ((req_r - req_t) + (res_r - res_t)) / 2
+// Calculate the peer delay: ((res_r - req_t) - (res_t - req_r)) / 2
+// AVB typically requires propagation delays < 800ns for a single hop, but < 50000ns may be acceptable
 uint64_t calculate_pdelay(gptp_pdelay_info_t *pdelay_info) {
-    struct timeval request_delay;
-    struct timeval response_delay;
+    struct timeval round_trip_time;
+    struct timeval gap_between;
     struct timeval calculated_delay;
-    timeval_subtract(&request_delay, &pdelay_info->timestamp_request_receipt, &pdelay_info->timestamp_request_transmission);
-    timeval_subtract(&response_delay, &pdelay_info->timestamp_response_receipt, &pdelay_info->timestamp_response_transmission);
-    timeval_add(&calculated_delay, &request_delay, &response_delay);
+    timeval_subtract(&round_trip_time, &pdelay_info->timestamp_response_receipt, &pdelay_info->timestamp_request_transmission);
+    timeval_subtract(&gap_between, &pdelay_info->timestamp_response_transmission, &pdelay_info->timestamp_request_receipt);
+    timeval_subtract(&calculated_delay, &round_trip_time, &gap_between);
     calculated_delay = timeval_divide_by_int(calculated_delay, 2);
-    uint64_t result = calculated_delay.tv_sec * 1000000000 + calculated_delay.tv_usec * 1000;
+    uint64_t result = calculated_delay.tv_sec * 1e9 + calculated_delay.tv_usec * 1e3;
     char data_message[255] = "";
-    sprintf(data_message, "(%lld.%06ld - %lld.%06ld) + (%lld.%06ld - %lld.%06ld) / 2 = %lld.%06ld", 
-        pdelay_info->timestamp_request_receipt.tv_sec, pdelay_info->timestamp_request_receipt.tv_usec,
-        pdelay_info->timestamp_request_transmission.tv_sec, pdelay_info->timestamp_request_transmission.tv_usec,
-        pdelay_info->timestamp_response_receipt.tv_sec, pdelay_info->timestamp_response_receipt.tv_usec,
-        pdelay_info->timestamp_response_transmission.tv_sec, pdelay_info->timestamp_response_transmission.tv_usec,
-        calculated_delay.tv_sec, calculated_delay.tv_usec
+    sprintf(data_message, "(%lld.%09ld - %lld.%09ld) - (%lld.%09ld - %lld.%09ld) / 2 = %lld.%09ld", 
+        pdelay_info->timestamp_response_receipt.tv_sec, (long)(pdelay_info->timestamp_response_receipt.tv_usec * 1e3),
+        pdelay_info->timestamp_request_transmission.tv_sec, (long)(pdelay_info->timestamp_request_transmission.tv_usec * 1e3),
+        pdelay_info->timestamp_response_transmission.tv_sec, (long)(pdelay_info->timestamp_response_transmission.tv_usec * 1e3),
+        pdelay_info->timestamp_request_receipt.tv_sec, (long)(pdelay_info->timestamp_request_receipt.tv_usec * 1e3),
+        calculated_delay.tv_sec, (long)(calculated_delay.tv_usec * 1e3)
     );
     //ESP_LOGI(TAG, "Calc pdelay: %s", data_message);
     return result;
@@ -397,7 +398,16 @@ uint64_t calculate_offset(gptp_sync_info_t *sync_info, gptp_pdelay_info_t *pdela
     timeval_subtract(&request_delay, &pdelay_info->timestamp_request_receipt, &pdelay_info->timestamp_request_transmission);
     timeval_subtract(&calculated_offset, &sync_delay, &request_delay);
     calculated_offset = timeval_divide_by_int(calculated_offset, 2);
-    uint64_t result = calculated_offset.tv_sec * 1000000000 + calculated_offset.tv_usec * 1000;
+    uint64_t result = calculated_offset.tv_sec * 1e9 + calculated_offset.tv_usec * 1e3;
+    char data_message[255] = "";
+    sprintf(data_message, "(%lld.%09ld - %lld.%09ld) - (%lld.%09ld - %lld.%09ld) / 2 = %lld.%09ld", 
+        sync_info->timestamp_sync_receipt.tv_sec, (long)(sync_info->timestamp_sync_receipt.tv_usec * 1e3),
+        sync_info->timestamp_sync_transmission.tv_sec, (long)(sync_info->timestamp_sync_transmission.tv_usec * 1e3),
+        pdelay_info->timestamp_request_receipt.tv_sec, (long)(pdelay_info->timestamp_request_receipt.tv_usec * 1e3),
+        pdelay_info->timestamp_request_transmission.tv_sec, (long)(pdelay_info->timestamp_request_transmission.tv_usec * 1e3),
+        calculated_offset.tv_sec, (long)(calculated_offset.tv_usec * 1e3)
+    );
+    ESP_LOGI(TAG, "Calc offset: %s", data_message);
     return result;
 }
 

@@ -117,13 +117,25 @@ static void gptp_task(void *pvParameters) {
         }
 
         // Log all received frames
-        print_frame(&frame, PRINT_SUMMARY);
+        //print_frame(&frame, PRINT_SUMMARY);
 
         // Handle each type of frame that needs action
         switch(frame.frame_type) {
             case avb_frame_gptp_pdelay_request:
                 //print_frame(&frame, PRINT_SUMMARY);
-                send_gptp_pdelay_response(&frame);
+                // Create a task to send the response at high priority
+                BaseType_t result = xTaskCreatePinnedToCore(
+                    pdelay_response_task,   // Task function
+                    "gptp-pdelay-response", // Task name
+                    6144,                   // Stack size (bytes)
+                    &frame,                 // Parameters
+                    21,                     // High priority (20)
+                    NULL,                   // Task handle
+                    PRO_CPU_NUM             // Pin to protocol CPU core
+                );
+                if (result != pdPASS) {
+                    ESP_LOGE(TAG, "Failed to create high priority task");
+                }
                 break;
             case avb_frame_gptp_pdelay_response:
                 //print_frame(&frame, PRINT_SUMMARY);
@@ -154,10 +166,10 @@ static void gptp_task(void *pvParameters) {
                 // If not, then discard the response follow up
                 break;
             case avb_frame_gptp_announce:
-                //print_frame(&frame, PRINT_SUMMARY);
+                print_frame(&frame, PRINT_SUMMARY);
                 // Check if the announce message is for same GM as current GM, if so do nothing
                 if (octets_to_uint(frame.payload + 53, 8) == current_gm->clock_id) {
-                    ESP_LOGI(TAG, "Announce message is for same GM as current GM.");
+                    //ESP_LOGI(TAG, "Announce message is for same GM as current GM.");
                 }
                 else {
                     // Extract the GM info from the announce message into a new GM struct
@@ -199,7 +211,7 @@ static void gptp_task(void *pvParameters) {
                         if (index == 0) {
 
                             // New best GM is now current GM
-                            ESP_LOGI(TAG, "Newly announcedGM is now current GM!");
+                            ESP_LOGI(TAG, "Newly announced GM is now current GM!");
 
                             // Reset sync list
                             *sync_list = (gptp_sync_info_t){0};
@@ -208,10 +220,11 @@ static void gptp_task(void *pvParameters) {
                 }
                 break;
             case avb_frame_gptp_sync:
-                //print_frame(&frame, PRINT_SUMMARY);
+                print_frame(&frame, PRINT_SUMMARY);
                 // Check if the sync message is from current GM
                 if (octets_to_uint(frame.payload + 20, 8) == current_gm->clock_id) {
-                    ESP_LOGI(TAG, "Sync message is from current GM.");
+
+                    //ESP_LOGI(TAG, "Sync message is from current GM.");
                     // If the sequence id is greater than the current sync sequence id
                     if (octets_to_uint(frame.payload + 30, 2) > current_sync->sequence_id) {
 
@@ -225,12 +238,7 @@ static void gptp_task(void *pvParameters) {
                         new_sync.timestamp_sync_receipt.tv_sec = frame.time_received.tv_sec;
                         new_sync.timestamp_sync_receipt.tv_usec = frame.time_received.tv_usec;
                         // Add the new sync info to the sync list
-                        int result = add_to_sync_list(&new_sync);
-                        if (result != -1) {
-                            ESP_LOGI(TAG, "Could not add sync message to sync list.");
-                            break;
-                        }
-                        ESP_LOGI(TAG, "New sync info (%d) added to sync list.", new_sync.sequence_id);
+                        add_to_sync_list(&new_sync);
                     }
                 }
                 else {
@@ -238,12 +246,13 @@ static void gptp_task(void *pvParameters) {
                 }
                 break;
             case avb_frame_gptp_follow_up:
-                //print_frame(&frame, PRINT_SUMMARY);
+                print_frame(&frame, PRINT_SUMMARY);
                 // If the sync message is from current GM
-                if (octets_to_uint(frame.payload + 20, 8) == current_gm->clock_id) {
+                //if (false) {
+                    if (octets_to_uint(frame.payload + 20, 8) == current_gm->clock_id) {
 
-                    ESP_LOGI(TAG, "Follow up message is from current GM.");
-                    // If the sequence id is greater than the current sync sequence id
+                    //ESP_LOGI(TAG, "Follow up message is from current GM.");
+                    // If the sequence id = the current sync sequence id
                     if (octets_to_uint(frame.payload + 30, 2) == current_sync->sequence_id) {
 
                         // Insert the sync transmission timestamp into current_sync
@@ -255,7 +264,7 @@ static void gptp_task(void *pvParameters) {
 
                         // Calculate the offset and insert it into current_sync
                         current_sync->calculated_offset = calculate_offset(current_sync, current_pdelay);
-                        ESP_LOGI(TAG, "Calculated offset: %lld ns", current_sync->calculated_offset);
+                        //ESP_LOGI(TAG, "Calculated offset: %lld ns", current_sync->calculated_offset);
 
                         // Calculate new mean offset from sync list and save it to gptp state
                         uint64_t new_mean_offset = 0;
@@ -266,7 +275,7 @@ static void gptp_task(void *pvParameters) {
                             count++;
                         }
                         gptp_state->mean_offset = new_mean_offset / count;
-                        ESP_LOGI(TAG, "New mean offset: %lld ns", gptp_state->mean_offset);
+                        //ESP_LOGI(TAG, "New mean offset: %lld ns", gptp_state->mean_offset);
                     }
                 }
                 else {
@@ -281,7 +290,7 @@ error:
 }
 
 // Check if local GM needed
-static void check_local_gm() {
+static void check_local_gm(void* arg) {
 
     // Get needed gPTP variables
     gptp_state_info_t *gptp_state = get_gptp_state();
@@ -381,7 +390,10 @@ static void send_gptp_pdelay_request(void* arg) {
 }
 
 // Send gPTP peer delay response and follow up messages
-static void send_gptp_pdelay_response(eth_frame_t * req_frame) {
+static void pdelay_response_task(void *pvParameters) {
+
+    // Get the needed variables
+    eth_frame_t *req_frame = (eth_frame_t *)pvParameters;
 
     // Create a new frame, set the header and append the response message
     eth_frame_t frame;
@@ -394,8 +406,13 @@ static void send_gptp_pdelay_response(eth_frame_t * req_frame) {
     // Insert the sequence_id from the request frame    
     memcpy(frame.payload + 30, req_frame->payload + 30, (2));
 
+    // Compensate for system latency (for testing on sw timestamp systems)
+    // Time received is adjusted to be earlier to account for estimated system latency
+    struct timeval adjusted_time_received = req_frame->time_received;
+    adjusted_time_received.tv_usec = (int)(adjusted_time_received.tv_usec - CONFIG_SYSTEM_LATENCY_COMP);
+
     // Insert the requeset_receipt_timestamp from the request time of receipt
-    timeval_to_octets(&req_frame->time_received, frame.payload + 34, frame.payload + 40);
+    timeval_to_octets(&adjusted_time_received, frame.payload + 34, frame.payload + 40);
 
     // Insert the requesting_source_port_identity from the request frame clock_identity
     memcpy(frame.payload + 44, req_frame->payload + 20, (8));
@@ -417,6 +434,11 @@ static void send_gptp_pdelay_response(eth_frame_t * req_frame) {
     memcpy(frame.payload + 44, req_frame->payload + 20, (8));
     memcpy(frame.payload + 52, req_frame->payload + 28, (2));
 
+    // Compensate for system latency (for testing on sw timestamp systems)
+    // Time sent is adjusted to be later to account for estimated system latency
+    struct timeval adjusted_time_sent = frame.time_sent;
+    adjusted_time_sent.tv_usec = (int)(adjusted_time_sent.tv_usec + CONFIG_SYSTEM_LATENCY_COMP);
+
     // Insert the response_origin_timestamp from the response time of transmission
     // using the time_sent from the response that was just sent
     timeval_to_octets(&frame.time_sent, frame.payload + 34, frame.payload + 40);
@@ -424,6 +446,9 @@ static void send_gptp_pdelay_response(eth_frame_t * req_frame) {
     // Send response follow up
     send_frame(&frame);
     //print_frame(&frame, PRINT_SUMMARY);
+
+    // Delete the task when done
+    vTaskDelete(NULL);
 }
 
 // Send gPTP announce message (if GM is local)
@@ -514,9 +539,10 @@ static void send_gptp_sync(void* arg) {
         frame.frame_type = avb_frame_gptp_follow_up;
         append_gptpdu(frame.frame_type, &frame);
 
-        // Re-insert the sequence_id, log_period
+        // Re-insert the sequence_id and log_period
         int_to_octets(&sync_sequence_id, frame.payload + 30, 2);
-        int_to_octets(&log_period, frame.payload + 33, 1);
+        uint8_t no_period = 127; // 127 = no period
+        int_to_octets(&no_period, frame.payload + 33, 1); 
 
         // Insert the transmission timestamp from the sync message that was just sent
         timeval_to_octets(&frame.time_sent, frame.payload + 34, frame.payload + 40);
@@ -705,7 +731,7 @@ void start_talker(esp_netif_iodriver_handle handle) {
         ESP_LOGI(TAG, "All FDs are open.");
         
         // Start gPTP manager task
-        xTaskCreate(gptp_task, "gptp_task", 6144, NULL, 5, NULL);
+        xTaskCreate(gptp_task, "gptp_task", 6144, NULL, 21, NULL);
 
         // Start AVTP manager task
         //xTaskCreate(avtp_task, "avtp_task", 6144, NULL, 5, NULL);
@@ -721,6 +747,6 @@ void start_talker(esp_netif_iodriver_handle handle) {
 // Stop the talker
 void stop_talker() {
     ESP_LOGI(TAG, "Stopping Talker...");
-    close_all_l2tap_fds();
+    //close_all_l2tap_fds();
     ESP_LOGI(TAG, "All FDs are closed.");
 }

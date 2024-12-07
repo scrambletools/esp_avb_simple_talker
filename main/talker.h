@@ -19,7 +19,7 @@
 static void gptp_task(void *pvParameters);
 static void check_local_gm(void* arg);
 static void send_gptp_pdelay_request(void* arg);
-static void send_gptp_pdelay_response(eth_frame_t * req_frame);
+static void pdelay_response_task(void *pvParameters);
 static void send_gptp_announce(void* arg);
 static void send_gptp_sync(void* arg);
 static void avtp_task(void *pvParameters);
